@@ -5,6 +5,10 @@ under "Unreleased"; `installer\build-all.ps1` moves them under the new version w
 
 ## Unreleased
 
+## 2.0.11-1-26 (November 1, 2026)
+
+- Published release. Every mode now works like Chat: drag files into the window (or click the paperclip, or paste), type what you want, and press Send. Includes the simple view for Transcribe, Image, Vector and 3D (1.8.11-1-26) and file drop for Chat and Code (1.9.11-1-26).
+
 ## 1.9.11-1-26 (November 1, 2026)
 
 - Files can be dropped into Chat and Code too: text and code files (up to 150 KB each) are read and sent inside your message, each under its file name. Audio, video and pictures point you to the mode that handles them.

@@ -1,6 +1,6 @@
 {
   "name": "llm-icarus",
-  "version": "1.9.11-1-26",
+  "version": "2.0.11-1-26",
   "description": "LLM Icarus: local chat, code, transcription and image generation, powered by a bundled llama.cpp engine",
   "type": "module",
   "private": true,
