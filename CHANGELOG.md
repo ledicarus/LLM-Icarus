@@ -5,6 +5,26 @@ under "Unreleased"; `installer\build-all.ps1` moves them under the new version w
 
 ## Unreleased
 
+## 1.9.11-1-26 (November 1, 2026)
+
+- Files can be dropped into Chat and Code too: text and code files (up to 150 KB each) are read and sent inside your message, each under its file name. Audio, video and pictures point you to the mode that handles them.
+
+## 1.8.11-1-26 (November 1, 2026)
+
+- Transcribe, Image, Vector and 3D now work like Chat: there are no forms to fill in. Drag files into the window (or click the paperclip, or paste a picture), type what you want, and press Send. The app reads your sentence for the details: "in Spanish" for a transcript; "portrait", "1216x832" or "4 images" for pictures; "black and white", "80 mm wide" or "remove the background" for a vector drawing; "40 x 20 x 10 mm" or "80 mm tall" for a 3D part. Several audio files can be dropped at once. Results appear below as before, newest at the bottom, and "Edit this", "Edit with the model" and "Trace this picture again" now fill the box instead of a form. The old screens with every setting are still there under "Advanced options" (and "Back to the simple view" returns), and the microphone button opens the dictation screen.
+
+## 1.7.11-1-26 (November 1, 2026)
+
+- Transcribe can now listen to your microphone. Click "Start listening", pick a microphone if you have several, and speak: Whisper stays loaded and each sentence appears about a second after you pause. A level meter shows the microphone is working, and "Stop" saves the text in the list with .srt and .txt downloads (and a Copy text button). Only the text is kept; the sound is never saved. File transcriptions wait while you are listening, and dictation is refused while a file is being transcribed. Added to the API (`/api/dictate`).
+
+## 1.6.11-1-26 (November 1, 2026)
+
+- New **3D** mode: makes STL files for 3D printing and CAD. Two ways: describe the part (with its overall size and other measurements) and the chat model designs it in OpenSCAD, with a button to open the script, edit it and rebuild; or give outlines from the front, right side and top plus the real dimensions, and a solid is carved at exactly those sizes. A built-in viewer lets you turn the result around, and each result shows its real size, with a warning if a designed part ignores the size you asked for. The 3D tools (OpenSCAD plus carving tools, about 80 MB) are a checkbox in the installers, a button on the 3D screen, and an entry in Settings > Engines. The API gets `POST /api/3d`, and Claude Code gets a `3d` command.
+
+## 1.5.11-1-26 (November 1, 2026)
+
+- New **Vector** mode: makes drawings as SVG and EPS files, for Illustrator, Inkscape, cutters and print shops. Three ways to start: the chat model writes the drawing from a description (and can edit its own earlier drawing), SDXL paints an illustration that is then traced, or you give it a picture to trace exactly. Options for black and white or color, level of detail, removing a white background, and the EPS width in millimetres. The new "vector tools" download is small (about 40 MB) and is a checkbox in the installers, a button on the Vector screen, and an entry in Settings > Engines. The API gets `POST /api/vector` (see API.md).
+
 ## 1.4.11-1-26 (November 1, 2026)
 
 - New logo: a realistic engraved-style portrait of Icarus (face, anatomy, long flowing hair, wings) generated with Stable Diffusion XL and made into a badge. It replaces the drawn figure. The busy animation bobs and tilts him gently.

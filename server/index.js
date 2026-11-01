@@ -9,6 +9,10 @@ import * as store from './store.js';
 import { runTurn } from './chat.js';
 import * as transcribe from './transcribe.js';
 import * as image from './image.js';
+import * as vector from './vector.js';
+import * as threed from './threed.js';
+import * as dictate from './dictate.js';
+import * as openscad from './openscad.js';
 import * as platform from './platform.js';
 import * as pyenv from './pyenv.js';
 import { pipeline } from 'node:stream/promises';
@@ -160,16 +164,17 @@ async function route(req, res, url) {
       const latest = await pyenv.latestVersion(name);
       return { package: name, installed, latest, updateAvailable: installed !== latest, canUpdate: priv };
     };
-    const [chat, whisper, imageTools] = await Promise.all([
+    const [chat, whisper, imageTools, vectorTools] = await Promise.all([
       looked(() => engine.checkUpdate()),
       looked(() => { const p = transcribe.pickPython(); return pkg(p.python, 'faster-whisper', p.source === 'private'); }),
       looked(() => { const py = image.pyPath(); return pkg(py, 'diffusers', py === pyenv.pythonExe()); }),
+      looked(() => (pyenv.pythonExe() ? pkg(pyenv.pythonExe(), 'vtracer', true) : { installed: null, note: 'not installed' })),
     ]);
-    return json(res, 200, { chat, whisper, image: imageTools });
+    return json(res, 200, { chat, whisper, image: imageTools, vector: vectorTools });
   }
   if (pathname === '/api/updates/package' && m === 'POST') {
     const { name } = await readBody(req);
-    const pkgName = { whisper: 'faster-whisper', image: 'diffusers' }[name];
+    const pkgName = { whisper: 'faster-whisper', image: 'diffusers', vector: 'vtracer' }[name];
     if (!pkgName) return json(res, 400, { error: 'Unknown component' });
     pyenv.updatePackage(pkgName).catch((e) => events.emit('engine-status', { message: `Update failed: ${e.message}`, error: true })); // progress arrives over /api/events
     return json(res, 202, { started: true });
@@ -185,7 +190,21 @@ async function route(req, res, url) {
 
   // status of the engines behind each mode, for Settings > Engines
   if (pathname === '/api/components' && m === 'GET') {
-    return json(res, 200, { chat: engine.status(), whisper: transcribe.status(), image: { installed: image.installed() } });
+    return json(res, 200, { chat: engine.status(), whisper: transcribe.status(), image: { installed: image.installed() }, vector: { installed: vector.installed() }, threed: threed.status() });
+  }
+  // install one of the Python-based parts from inside the app; progress arrives over /api/events as engine-status
+  if (pathname === '/api/components/install' && m === 'POST') {
+    const { feature } = await readBody(req);
+    if (!['whisper', 'image', 'vector', 'threed'].includes(feature)) return json(res, 400, { error: 'Unknown component' });
+    // 3D = OpenSCAD (a download) plus the carving tools (pip)
+    (feature === 'threed' ? threed.installAll() : pyenv.installFeature(feature))
+      .then(() => {
+        vector.forgetInstalled();
+        threed.forgetInstalled();
+        events.emit('engine-status', { message: 'Installed.', done: true, feature });
+      })
+      .catch((e) => events.emit('engine-status', { message: `Install failed: ${e.message.split('\n')[0]}`, error: true, feature }));
+    return json(res, 202, { started: true });
   }
   if (pathname === '/api/settings' && m === 'GET') return json(res, 200, store.settings());
   if (pathname === '/api/settings' && m === 'POST') return json(res, 200, store.saveSettings(await readBody(req)));
@@ -281,6 +300,21 @@ async function route(req, res, url) {
     return fs.createReadStream(f.file).pipe(res);
   }
 
+  // --- microphone dictation: start a session, send each spoken sentence as raw 16 kHz mono 16-bit audio, then stop ---
+  if (pathname === '/api/dictate' && m === 'GET') return json(res, 200, { active: dictate.active(), whisper: transcribe.status().installed });
+  if (pathname === '/api/dictate/start' && m === 'POST') return json(res, 200, await dictate.start(await readBody(req)));
+  if ((match = pathname.match(/^\/api\/dictate\/([\w-]+)\/chunk$/)) && m === 'POST') {
+    const parts = [];
+    let size = 0;
+    for await (const c of req) {
+      size += c.length;
+      if (size > 4_000_000) throw new Error('That audio clip is too long');
+      parts.push(c);
+    }
+    return json(res, 200, await dictate.chunk(match[1], Number(url.searchParams.get('seq')) || 0, Number(url.searchParams.get('offset')) || 0, Buffer.concat(parts)));
+  }
+  if ((match = pathname.match(/^\/api\/dictate\/([\w-]+)\/stop$/)) && m === 'POST') return json(res, 200, { transcript: await dictate.stop(match[1]) });
+
   // --- image ---
   if (pathname === '/api/image' && m === 'GET') return json(res, 200, { installed: image.installed(), jobs: image.list() });
   if (pathname === '/api/image' && m === 'POST') {
@@ -298,6 +332,62 @@ async function route(req, res, url) {
     if (!f) return json(res, 404, { error: 'Not found' });
     const dl = url.searchParams.get('download') === '1';
     res.writeHead(200, { 'Content-Type': 'image/png', ...(dl && { 'Content-Disposition': `attachment; filename="${match[1]}-${match[2]}"` }) });
+    return fs.createReadStream(f).pipe(res);
+  }
+
+  // --- vector (SVG + EPS) ---
+  if (pathname === '/api/vector' && m === 'GET') return json(res, 200, { installed: vector.installed(), jobs: vector.list() });
+  if (pathname === '/api/vector' && m === 'POST') {
+    // { method: 'trace'|'llm'|'sdxl', prompt?, reference?, modelId?, imageModelId?, baseJob?, aspect?, thinking?, strength?,
+    //   colormode?, detail?, removeBackground?, widthMm?, wait? }
+    const body = await readBody(req);
+    const job = vector.submit(body);
+    if (!body.wait) return json(res, 202, { id: job.id });
+    await job.finished;
+    const base = `/api/vector/${job.id}`;
+    return json(res, job.status === 'done' ? 200 : 500, { id: job.id, status: job.status, error: job.error, svg: `${base}/out.svg`, eps: `${base}/out.eps` });
+  }
+  if ((match = pathname.match(/^\/api\/vector\/([\w-]+)\/cancel$/)) && m === 'POST') return json(res, 200, { ok: vector.cancel(match[1]) });
+  if ((match = pathname.match(/^\/api\/vector\/([\w-]+)$/)) && m === 'DELETE') return json(res, 200, { removed: vector.remove(match[1]) });
+  if ((match = pathname.match(/^\/api\/vector\/([\w-]+)\/([\w.]+)$/)) && m === 'GET') {
+    const f = vector.fileFor(match[1], match[2]);
+    if (!f) return json(res, 404, { error: 'Not found' });
+    const ext = path.extname(f);
+    const dl = url.searchParams.get('download') === '1';
+    res.writeHead(200, {
+      'Content-Type': { '.svg': 'image/svg+xml', '.eps': 'application/postscript', '.png': 'image/png' }[ext],
+      'X-Content-Type-Options': 'nosniff',
+      // a drawing written by a model is untrusted: it must never run script, even when opened on its own in a tab
+      ...(ext === '.svg' && { 'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:" }),
+      ...(dl && { 'Content-Disposition': `attachment; filename="icarus-${match[1]}${ext}"` }),
+    });
+    return fs.createReadStream(f).pipe(res);
+  }
+
+  // --- 3D (STL) ---
+  if (pathname === '/api/3d' && m === 'GET') return json(res, 200, { ...threed.status(), jobs: threed.list() });
+  if (pathname === '/api/3d' && m === 'POST') {
+    // { method: 'scad'|'photos', prompt?, sizeMm?: {x,y,z}, sizeText?, modelId?, thinking?, baseJob?, code?,
+    //   views?: {front,side,top: picture paths}, quality?, background?, wait? }
+    const body = await readBody(req);
+    const job = threed.submit(body);
+    if (!body.wait) return json(res, 202, { id: job.id });
+    await job.finished;
+    const base = `/api/3d/${job.id}`;
+    return json(res, job.status === 'done' ? 200 : 500, { id: job.id, status: job.status, error: job.error, stl: job.files.stl ? `${base}/out.stl` : undefined, scad: job.files.scad ? `${base}/model.scad` : undefined, size: job.size, triangles: job.triangles, warning: job.warning });
+  }
+  if ((match = pathname.match(/^\/api\/3d\/([\w-]+)\/cancel$/)) && m === 'POST') return json(res, 200, { ok: threed.cancel(match[1]) });
+  if ((match = pathname.match(/^\/api\/3d\/([\w-]+)$/)) && m === 'DELETE') return json(res, 200, { removed: threed.remove(match[1]) });
+  if ((match = pathname.match(/^\/api\/3d\/([\w-]+)\/([\w.]+)$/)) && m === 'GET') {
+    const f = threed.fileFor(match[1], match[2]);
+    if (!f) return json(res, 404, { error: 'Not found' });
+    const ext = path.extname(f);
+    const dl = url.searchParams.get('download') === '1';
+    res.writeHead(200, {
+      'Content-Type': ext === '.stl' ? 'model/stl' : 'text/plain; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff',
+      ...(dl && { 'Content-Disposition': `attachment; filename="icarus-${match[1]}${ext}"` }),
+    });
     return fs.createReadStream(f).pipe(res);
   }
 

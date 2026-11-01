@@ -38,6 +38,56 @@ In `code` mode the agent can read and edit files in that project (and run comman
 "Allow shell commands" is ticked in the app). Say "Do not change any files" when you only want
 an answer.
 
+## Microphone dictation
+
+The Transcribe screen can listen to a microphone. A program can do the same by sending speech as raw audio (16 kHz,
+mono, 16-bit signed little-endian, no header), one sentence at a time. Whisper stays loaded between sentences, so each
+comes back in about a second.
+
+1. `POST /api/dictate/start` with `{ "language": "auto" | "en" | ... }` loads Whisper and returns `{ "id" }`. Only one session can be open, and it is refused while a file is being transcribed.
+2. `POST /api/dictate/<id>/chunk?seq=0&offset=12.5` with the audio as the request body (`Content-Type: application/octet-stream`) returns `{ "text", "segments": [{ "start", "end", "text" }] }`. `seq` counts up from 0 and `offset` is the number of seconds since the session began (used for the caption times). Send one sentence per request, no longer than about 25 seconds.
+3. `POST /api/dictate/<id>/stop` ends the session and saves what was heard in the Transcribe list (text and .srt). Sessions that stop sending audio and pinging `GET /api/dictate` for three minutes are ended automatically.
+
+The audio is deleted as soon as Whisper has read it; only the text is kept.
+
+## Vector drawings (SVG and EPS)
+
+`POST /api/vector` makes a drawing and saves it as both SVG and EPS. Add `"wait": true` to hold the request until it is
+finished; the reply is `{ "id", "status", "svg", "eps" }`, where `svg` and `eps` are download paths on the same address
+(for example `/api/vector/<id>/out.eps`). Without `wait` it answers right away with the job `id`, and `GET /api/vector`
+lists the jobs and their status.
+
+| Field | Meaning |
+| --- | --- |
+| `method` | `"llm"` the chat model writes the SVG from `prompt` (icons, simple shapes); `"sdxl"` SDXL paints a flat illustration from `prompt` and it is traced; `"trace"` trace `reference` exactly. |
+| `prompt` | What to draw (for `llm` and `sdxl`). |
+| `reference` | Path to a picture on this PC: the picture to trace, or a guide for `sdxl`. |
+| `modelId` | Chat model for `llm` (ids from `GET /api/models`). |
+| `imageModelId` | SDXL model for `sdxl`. |
+| `baseJob` | With `llm`: the id of an earlier drawing to edit; `prompt` then says what to change. |
+| `colormode`, `detail` | For `sdxl` and `trace`: `"color"` or `"binary"` (black and white), and detail from 1 (coarse) to 5 (fine). |
+| `widthMm` | Optional: scale the EPS to this width in millimetres. |
+
+The vector tools are a small download (about 40 MB): install them from the Vector screen or Settings > Engines.
+
+## 3D solids (STL)
+
+`POST /api/3d` makes an STL file. Add `"wait": true` to hold the request until it is finished; the reply is
+`{ "id", "status", "stl", "scad", "size": [x, y, z], "triangles", "warning" }`, where `stl` and `scad` are download paths
+(for example `/api/3d/<id>/out.stl`) and `size` is the real size of the result in millimetres. `GET /api/3d` lists the jobs.
+
+| Field | Meaning |
+| --- | --- |
+| `method` | `"scad"`: the chat model designs the part as an OpenSCAD script from `prompt`; or `"photos"`: carve a solid from outlines in `views`. |
+| `prompt`, `sizeMm`, `sizeText` | For `scad`: what to make, the overall size `{ "x": width, "y": depth, "z": height }` in mm, and other measurements as text ("wall 3 mm, hole 8 mm"). |
+| `modelId`, `thinking` | The chat model and whether it should think first (slower, better). |
+| `baseJob` | With `scad`: the id of an earlier design to change; `prompt` then says what to change. |
+| `code` | With `scad`: an OpenSCAD script to build as it is (no model involved). |
+| `views` | For `photos`: `{ "front": path, "side": path, "top": path }` to straight-on outlines on a plain background. `side` is the RIGHT side (front on the left); `top` has the front edge at the bottom. At least one picture; `sizeMm` gives the real size, and any size it leaves out is worked out from the outlines. |
+| `quality` | For `photos`: 1 draft, 2 normal, 3 fine. |
+
+The 3D tools (OpenSCAD and the carving tools, about 80 MB) install from the 3D screen or Settings > Engines.
+
 ## Using it from Claude Code
 
 Windows: tick **Let Claude Code send prompts to LLM Icarus** during setup, or copy the

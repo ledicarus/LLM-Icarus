@@ -44,8 +44,39 @@ export function submit({ src, language = 'auto', model = platform.defaultWhisper
   return job;
 }
 
+// While someone is dictating into the microphone, Whisper is loaded and busy: file jobs wait their turn.
+let blocked = false;
+export const isBusy = () => !!running;
+export function block(on) {
+  blocked = on;
+  if (!on) pump();
+}
+
+const srtTime = (t) => {
+  const ms = Math.round(t * 1000);
+  const p = (n, w = 2) => String(n).padStart(w, '0');
+  return `${p(Math.floor(ms / 3600000))}:${p(Math.floor((ms % 3600000) / 60000))}:${p(Math.floor((ms % 60000) / 1000))},${p(ms % 1000, 3)}`;
+};
+
+// Saves a finished transcript that did not come from a file (microphone dictation) so it shows up in the list with
+// the same Download .srt / .txt buttons. lines: [{ start, end, text }] in seconds.
+export function saveFinished({ name, source, language, duration, device, lines }) {
+  const id = crypto.randomUUID().slice(0, 8);
+  const base = `microphone-${new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-')}`;
+  const dir = path.join(OUT, id);
+  fs.mkdirSync(dir, { recursive: true });
+  const wrap = (text) => text.split(' ').reduce((acc, w) => (acc.length && (acc[acc.length - 1] + ' ' + w).length > 42 ? [...acc, w] : [...acc.slice(0, -1), ((acc[acc.length - 1] || '') + ' ' + w).trim()]), []).join('\n');
+  fs.writeFileSync(path.join(dir, `${base}.txt`), lines.map((l) => l.text).join('\n') + '\n');
+  fs.writeFileSync(path.join(dir, `${base}.srt`), lines.map((l, i) => `${i + 1}\n${srtTime(l.start)} --> ${srtTime(l.end)}\n${wrap(l.text)}\n`).join('\n'));
+  const job = { id, name, source, status: 'done', percent: 100, language, duration, device, segments: lines.length, base, created: new Date().toISOString(), text: [] };
+  jobs.set(id, job);
+  writeJson(path.join(dir, 'meta.json'), summary(job));
+  emit('transcribe-job', summary(job));
+  return summary(job);
+}
+
 async function pump() {
-  if (running) return;
+  if (running || blocked) return;
   const job = queue.shift();
   if (!job) return;
   running = job;

@@ -1,3 +1,5 @@
+import { planJob, kindOf } from './intent.js';
+
 const $ = (id) => document.getElementById(id);
 const api = async (url, opts = {}) => {
   const res = await fetch(url, {
@@ -10,13 +12,13 @@ const api = async (url, opts = {}) => {
   return data;
 };
 
-const state = { projects: [], convs: [], models: [], engine: null, conv: null, mode: 'chat', projectId: null, busy: false, apiTasks: 0, ctrl: null };
+const state = { projects: [], convs: [], models: [], engine: null, conv: null, mode: 'chat', projectId: null, busy: false, apiTasks: 0, ctrl: null, adv: {}, attach: [], base: null };
 
 // The sidebar logo animates (logo-working.png, an animated PNG) whenever something is running, so it's easy to tell the app is busy.
 let gifMissing = false;
 const isActive = (j) => ['queued', 'loading', 'running'].includes(j.status);
 function isWorking() {
-  return !!(state.busy || state.modelLoading || state.apiTasks > 0 || (state.transcripts || []).some(isActive) || (state.image?.jobs || []).some(isActive));
+  return !!(state.busy || state.modelLoading || state.apiTasks > 0 || (state.transcripts || []).some(isActive) || (state.image?.jobs || []).some(isActive) || (state.vector?.jobs || []).some(isActive) || (state.threed?.jobs || []).some(isActive));
 }
 function updateBrand() {
   const img = $('brand-logo');
@@ -55,8 +57,8 @@ function render(text) {
 // ---- loading -------------------------------------------------------------
 
 async function refresh() {
-  [state.projects, state.convs, state.models, state.engine, state.settings, state.transcripts, state.image] = await Promise.all([
-    api('/api/projects'), api('/api/conversations'), api('/api/models'), api('/api/engine'), api('/api/settings'), api('/api/transcribe'), api('/api/image'),
+  [state.projects, state.convs, state.models, state.engine, state.settings, state.transcripts, state.image, state.vector, state.threed] = await Promise.all([
+    api('/api/projects'), api('/api/conversations'), api('/api/models'), api('/api/engine'), api('/api/settings'), api('/api/transcribe'), api('/api/image'), api('/api/vector'), api('/api/3d'),
   ]);
   renderSidebar();
   renderModels();
@@ -304,6 +306,14 @@ function bestFitModel(llms) {
   return llms.filter((m) => m.exists && m.size <= v * 0.55).sort((a, b) => b.size - a.size)[0] || null;
 }
 
+// For Vector and 3D: one answer at a time, so quality matters more than speed. Take the biggest model that still fits in
+// GPU memory (bigger models design and draw far better), falling back to the first one when the memory is unknown.
+function bestQualityModel(llms) {
+  const v = vramBytes();
+  const ok = llms.filter((m) => m.exists !== false);
+  return (v ? ok.filter((m) => m.size <= v * 0.85).sort((a, b) => b.size - a.size)[0] : null) || ok[0] || null;
+}
+
 function updateCodeWarning() {
   const el = $('code-warn');
   if (!el) return;
@@ -367,11 +377,15 @@ function renderMessages() {
   const box = $('messages');
   const ph = $('placeholder');
   const chatLike = state.mode === 'chat' || state.mode === 'code';
+  const simple = SIMPLE_MODES.includes(state.mode) && !state.adv[state.mode];
   box.hidden = !chatLike;
   ph.hidden = chatLike;
-  $('composer').parentElement.hidden = !chatLike;
+  $('composer').parentElement.hidden = !chatLike && !simple;
+  $('attach').hidden = false;
+  $('mic-open').hidden = state.mode !== 'transcribe';
+  renderAttachments();
   $('code-bar').hidden = state.mode !== 'code';
-  $('input').placeholder = state.mode === 'code' ? 'Describe a task for the agent in this project…' : 'Message your local model…';
+  $('input').placeholder = state.mode === 'code' ? 'Describe a task for the agent in this project…' : simple ? SIMPLE_HINTS[state.mode].placeholder : 'Message your local model…';
   if (state.mode === 'code') {
     const proj = state.projects.find((p) => p.id === state.projectId);
     $('code-project').textContent = proj ? `Project: ${proj.name}` : 'No project selected — click a project name in the sidebar';
@@ -380,12 +394,15 @@ function renderMessages() {
     updateCodeWarning();
   }
   $('model-select').hidden = !chatLike;
-  if (!['transcribe', 'image'].includes(state.mode)) {
+  if (!['transcribe', 'image', 'vector', '3d'].includes(state.mode)) {
     delete ph.dataset.view; // so the transcribe/image forms are rebuilt next time
     ph.style.textAlign = '';
   }
-  if (state.mode === 'image') return renderImage(ph);
-  if (state.mode === 'transcribe') return renderTranscribe(ph);
+  if (simple) return renderSimple(ph, state.mode);
+  if (state.mode === 'image') return addBackLink(ph, renderImage(ph));
+  if (state.mode === 'vector') return addBackLink(ph, renderVector(ph));
+  if (state.mode === '3d') return addBackLink(ph, renderThreeD(ph));
+  if (state.mode === 'transcribe') return addBackLink(ph, renderTranscribe(ph));
   if (!chatLike) {
     const text = {
       transcribe: 'Transcribe mode will load a Whisper model and turn audio/video into text and captions.',
@@ -482,8 +499,12 @@ async function newChat(projectId = state.projectId) {
 }
 
 async function send() {
-  const text = $('input').value.trim();
-  if (!text || state.busy) return;
+  if (SIMPLE_MODES.includes(state.mode)) return sendSimple();
+  const typed = $('input').value.trim();
+  const dropped = state.attach.filter((a) => a.text != null);
+  if ((!typed && !dropped.length) || state.busy) return;
+  // dropped text and code files travel inside the message, each under its name
+  const text = (typed || 'Please look at the attached file.') + dropped.map((a) => `\n\nFile: ${a.name}\n\`\`\`\n${a.text.replace(/\n$/, '')}\n\`\`\``).join('');
   const modelId = $('model-select').value;
   if (!modelId) return setStatus('Add a model first (Settings > Models).');
   if (!state.engine.installed) return setStatus('Install the engine first (Settings > Engines).');
@@ -492,6 +513,8 @@ async function send() {
   if (state.mode === 'code' && !state.projectId) return setStatus('Pick a project first: click a project name in the sidebar.');
   if (!state.conv) state.conv = await api('/api/conversations', { method: 'POST', body: { projectId: state.projectId, mode: state.mode, modelId } });
   $('input').value = '';
+  state.attach = [];
+  renderAttachments();
   autosize();
   state.busy = true;
   updateBrand();
@@ -584,6 +607,212 @@ function autosize() {
   i.style.height = Math.min(i.scrollHeight, 220) + 'px';
 }
 
+// ---- drop-a-file view for Transcribe, Image, Vector and 3D ------------------------
+// These modes work like Chat: drop files into the box, type what you want, press Send. intent.js turns that into the
+// request each mode needs. "Advanced options" opens the old form with every setting.
+
+const SIMPLE_HINTS = {
+  transcribe: { title: 'Transcribe', list: 'tr-list', msg: 'tr-msg', placeholder: 'Drop audio or video files here and press Send (add a language if you like: "in Spanish")', text: 'Drop in audio or video files to get the text and captions back. Or click the microphone to speak.' },
+  image: { title: 'Image', list: 'im-list', msg: 'im-msg', placeholder: 'Describe a picture. Drop a picture here to change it instead.', text: 'Describe a picture, or drop one in and say what to change. You can add a size ("portrait", "1216x832") and "4 images".' },
+  vector: { title: 'Vector', list: 'vc-list', msg: 'vc-msg', placeholder: 'Describe a drawing, or drop a picture to trace it', text: 'Describe a drawing and SDXL paints it and traces it, or drop a picture to trace it exactly. Add "black and white", "80 mm wide" or "remove the background" if you want them. You get SVG and EPS files.' },
+  '3d': { title: '3D', list: 'td-list', msg: 'td-msg', placeholder: 'Describe a part with its sizes (40 x 20 x 10 mm), or drop front, side and top pictures', text: 'Describe a part with its sizes and the chat model designs it. Or drop pictures of an object (name them front, side and top, or drop them in that order) with its real size, for example "80 mm tall", and a solid is carved from them. You get an STL file.' },
+};
+const SIMPLE_MODES = Object.keys(SIMPLE_HINTS);
+
+function renderSimple(ph, mode) {
+  ph.hidden = false;
+  const h = SIMPLE_HINTS[mode];
+  if (ph.dataset.view !== 'simple-' + mode) {
+    ph.dataset.view = 'simple-' + mode;
+    ph.style.textAlign = 'left';
+    ph.innerHTML = `
+      <div class="tr-wrap sv">
+        <div class="sv-head"><h2>${h.title}</h2><button id="sv-adv" type="button" class="ghost">Advanced options</button></div>
+        <p class="muted">${h.text}</p>
+        <div id="sv-setup"></div>
+        ${mode === 'vector' ? '<div id="vc-setup"></div>' : mode === '3d' ? '<div id="td-setup"></div>' : ''}
+        <div id="${h.msg}" class="muted"></div>
+        <div id="${h.list}" class="sv-feed"></div>
+      </div>`;
+    $('sv-adv').onclick = () => toAdvanced(mode);
+  }
+  ({ transcribe: renderTranscriptList, image: renderImageList, vector: renderVectorList, '3d': renderThreeDList })[mode]();
+  if (mode === 'vector') renderVectorSetup();
+  if (mode === '3d') renderThreeDSetup();
+  simpleSetup(mode);
+  ph.scrollTop = ph.scrollHeight;
+}
+
+// what is still missing for Transcribe and Image (Vector and 3D have their own install buttons)
+async function simpleSetup(mode) {
+  if (mode !== 'transcribe' && mode !== 'image') return;
+  const c = await api('/api/components').catch(() => null);
+  const box = $('sv-setup');
+  if (!c || !box || state.mode !== mode) return;
+  box.innerHTML = '';
+  const need = mode === 'transcribe' ? (!c.whisper.installed && ['whisper', 'the speech-to-text tools']) : (!c.image.installed && ['image', 'the image tools']);
+  if (need) {
+    box.innerHTML = `<div class="tr-err">${esc(need[1])} are not installed yet (a download from the internet).</div>`;
+    const b = document.createElement('button');
+    b.className = 'primary';
+    b.textContent = `Install ${need[1]}`;
+    b.onclick = async () => {
+      b.disabled = true;
+      b.textContent = 'Installing… (progress is shown at the bottom)';
+      try {
+        await api('/api/components/install', { method: 'POST', body: { feature: need[0] } });
+      } catch (e) {
+        b.disabled = false;
+        setStatus(e.message);
+      }
+    };
+    box.append(b);
+  } else if (mode === 'image' && !state.models.some((m) => m.kind === 'image')) {
+    box.innerHTML = '<p class="muted">No image model yet. Open Advanced options to download SDXL, or add a checkpoint in Settings > Models.</p>';
+  }
+}
+
+function toAdvanced(mode) {
+  state.adv[mode] = true;
+  renderMessages();
+}
+
+// the way back from an advanced screen
+function addBackLink(ph) {
+  const wrap = ph.querySelector('.tr-wrap');
+  if (!wrap || wrap.querySelector('.sv-back')) return;
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'sv-back ghost';
+  b.textContent = '← Back to the simple view';
+  b.onclick = () => {
+    if (mic) stopDictation();
+    state.adv[state.mode] = false;
+    renderMessages();
+  };
+  wrap.prepend(b);
+}
+
+// ---- files dropped into the box ----
+
+function renderAttachments() {
+  const box = $('attach-chips');
+  box.innerHTML = '';
+  if (state.base && state.base.mode === state.mode) {
+    const c = document.createElement('span');
+    c.className = 'chip';
+    c.innerHTML = `Editing ${esc(state.base.label)}: say what should change`;
+    c.append(chipX(() => (state.base = null)));
+    box.append(c);
+  }
+  for (const a of state.attach) {
+    const c = document.createElement('span');
+    c.className = 'chip';
+    if (a.preview) c.innerHTML = `<img src="${esc(a.preview)}" alt="">`;
+    c.append(document.createTextNode(a.name + (a.uploading ? ' (uploading…)' : '')));
+    c.append(chipX(() => (state.attach = state.attach.filter((x) => x !== a))));
+    box.append(c);
+  }
+  box.hidden = !box.children.length;
+}
+
+function chipX(remove) {
+  const x = document.createElement('button');
+  x.type = 'button';
+  x.className = 'chip-x';
+  x.textContent = '✕';
+  x.title = 'Remove';
+  x.onclick = () => {
+    remove();
+    renderAttachments();
+  };
+  return x;
+}
+
+const TEXT_EXT = /\.(txt|md|markdown|json|jsonc|js|mjs|ts|tsx|jsx|py|java|c|cc|cpp|h|hpp|cs|go|rs|rb|php|html?|css|scss|csv|tsv|xml|ya?ml|toml|ini|cfg|log|sql|sh|bat|ps1|svg|tex|srt|vtt|scad|swift|kt|lua|r)$/i;
+
+// Chat and Code: text and code files are read here and sent inside the message
+async function addTextFiles(files) {
+  for (const f of files) {
+    if (!(f.type?.startsWith('text/') || TEXT_EXT.test(f.name || ''))) {
+      setStatus(`${f.name}: Chat and Code take text and code files. Use Transcribe for audio or video, and Image, Vector or 3D for pictures.`);
+      continue;
+    }
+    if (f.size > 150000 || state.attach.reduce((n, a) => n + (a.text?.length || 0), 0) + f.size > 300000) {
+      setStatus(`${f.name} is too big to put in a message (150 KB per file, 300 KB in all). Paste the part you need instead.`);
+      continue;
+    }
+    state.attach.push({ name: f.name, text: await f.text() });
+    renderAttachments();
+  }
+}
+
+async function addFiles(files) {
+  if (state.adv[state.mode]) return setStatus('Switch back to the simple view to drop files.');
+  if (state.mode === 'chat' || state.mode === 'code') return addTextFiles(files);
+  for (const f of files) {
+    const a = { name: f.name || 'pasted-picture.png', preview: f.type?.startsWith('image/') ? URL.createObjectURL(f) : null, uploading: true };
+    state.attach.push(a);
+    renderAttachments();
+    // Send waits on `done`, so pressing it while a big file is still uploading just works
+    a.done = (async () => {
+      try {
+        const res = await fetch('/api/upload?name=' + encodeURIComponent(a.name), { method: 'POST', body: f });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        a.path = data.path;
+        a.uploading = false;
+      } catch (e) {
+        state.attach = state.attach.filter((x) => x !== a);
+        setStatus(`Could not add ${a.name}: ${e.message}`);
+      }
+      renderAttachments();
+    })();
+  }
+}
+
+// one of our own earlier results, used again as an input (path form understood by the server)
+function attachResult(path, name, preview) {
+  if (!state.attach.some((a) => a.path === path)) state.attach.push({ path, name, preview });
+  renderAttachments();
+  $('input').focus();
+}
+
+function setBase(mode, id, label) {
+  state.base = { mode, id, label };
+  renderAttachments();
+  $('input').focus();
+}
+
+async function sendSimple() {
+  const mode = state.mode;
+  const text = $('input').value.trim();
+  if (state.attach.some((a) => a.uploading)) {
+    setStatus('Waiting for your file to finish uploading…');
+    const pending = [...state.attach];
+    await Promise.all(pending.map((a) => a.done));
+    if (pending.some((a) => !a.path)) return; // the failure message is already showing
+    setStatus('');
+  }
+  const llms = state.models.filter((m) => m.kind !== 'image');
+  const imgs = state.models.filter((m) => m.kind === 'image');
+  const ctx = { llmId: bestQualityModel(llms)?.id, imageModelId: imgs[0]?.id, sdxlReady: !!(state.image?.installed && imgs.length), base: state.base?.mode === mode ? state.base.id : null };
+  const plan = planJob(mode, text, state.attach, ctx);
+  if (plan.error) return setStatus(plan.error);
+  setStatus('');
+  try {
+    for (const r of plan.requests) await api(r.url, { method: 'POST', body: r.body });
+  } catch (e) {
+    return setStatus(e.message);
+  }
+  $('input').value = '';
+  autosize();
+  state.attach = [];
+  state.base = null;
+  [state.transcripts, state.image, state.vector, state.threed] = await Promise.all([api('/api/transcribe'), api('/api/image'), api('/api/vector'), api('/api/3d')]);
+  renderMessages();
+}
+
 // ---- transcribe mode -----------------------------------------------------
 
 const LANGS = [['auto', 'Auto-detect'], ['en', 'English'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['it', 'Italian'], ['pt', 'Portuguese'], ['nl', 'Dutch'], ['ja', 'Japanese'], ['zh', 'Chinese']];
@@ -597,7 +826,17 @@ function renderTranscribe(ph) {
     ph.innerHTML = `
       <div class="tr-wrap">
         <h2>Transcribe</h2>
-        <p class="muted">Turns audio or video into text and an .srt caption file using Whisper large-v3 on your GPU. The chat model is unloaded while it runs.</p>
+        <p class="muted">Turns speech into text and an .srt caption file using Whisper large-v3 on your GPU: speak into your microphone, or give it an audio or video file. The chat model is unloaded while it runs.</p>
+        <div class="mic-box">
+          <div class="row">
+            <button id="mic-go" class="primary">🎤 Start listening</button>
+            <select id="mic-device" title="Which microphone to use"></select>
+            <span class="mic-meter" title="Input level"><span id="mic-level"></span></span>
+          </div>
+          <div id="mic-msg" class="muted">Speak, then pause: each sentence appears a moment after you stop. Only the text is kept; the sound is never saved.</div>
+          <div id="mic-text" class="mic-text" hidden></div>
+          <div class="row" id="mic-actions" hidden><button id="mic-copy" type="button">Copy text</button></div>
+        </div>
         <div class="row"><input id="tr-path" placeholder="Full path to an audio/video file, e.g. C:\\Users\\YourName\\Videos\\clip.mp4"></div>
         <div class="row">
           <select id="tr-lang">${LANGS.map(([v, n]) => `<option value="${v}">${n}</option>`).join('')}</select>
@@ -624,9 +863,228 @@ function renderTranscribe(ph) {
       e.target.value = '';
     };
     $('tr-path').addEventListener('keydown', (e) => e.key === 'Enter' && $('tr-go').click());
+    $('mic-go').onclick = () => (mic ? stopDictation() : startDictation());
+    $('mic-copy').onclick = async () => {
+      try {
+        await navigator.clipboard.writeText($('mic-text').textContent.replace(/ …$/, ''));
+        $('mic-copy').textContent = 'Copied';
+      } catch {
+        $('mic-copy').textContent = 'Select the text and press Ctrl+C';
+      }
+      setTimeout(() => ($('mic-copy').textContent = 'Copy text'), 2000);
+    };
+    $('mic-device').onchange = () => {
+      try {
+        localStorage.setItem('micDevice', $('mic-device').value);
+      } catch {
+        /* storage blocked: the choice just is not remembered */
+      }
+    };
   }
+  fillMicDevices();
   renderTranscriptList();
 }
+
+// ---- microphone dictation --------------------------------------------------
+// The page listens, cuts speech into sentences at pauses, and sends each one as raw 16 kHz 16-bit audio to
+// /api/dictate; the server keeps Whisper loaded between sentences, so each appears a moment after you stop speaking.
+
+let mic = null; // the running session
+const micMsg = (t) => $('mic-msg') && ($('mic-msg').textContent = t);
+const MIC_FRAME = 320; // 20 ms at 16 kHz
+
+async function fillMicDevices() {
+  const sel = $('mic-device');
+  if (!sel || !navigator.mediaDevices?.enumerateDevices) return;
+  let saved = '';
+  try {
+    saved = localStorage.getItem('micDevice') || '';
+  } catch {
+    /* ignore */
+  }
+  const keep = sel.value || saved;
+  const inputs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications');
+  sel.innerHTML = '';
+  sel.append(new Option('Default microphone', ''));
+  inputs.filter((d) => d.deviceId && d.deviceId !== 'default').forEach((d, i) => sel.append(new Option(d.label || `Microphone ${i + 1}`, d.deviceId)));
+  if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
+}
+
+function micError(e) {
+  if (e.name === 'NotAllowedError' || e.name === 'SecurityError') {
+    return 'Microphone access was blocked. Allow it when asked, and make sure Windows lets desktop apps use the microphone (Settings > Privacy & security > Microphone). Then click Start again.';
+  }
+  if (e.name === 'NotFoundError' || e.name === 'OverconstrainedError') return 'No microphone was found. Plug one in or pick another from the list.';
+  if (e.name === 'NotReadableError') return 'The microphone is being used by another program. Close it there and try again.';
+  return e.message || String(e);
+}
+
+async function startDictation() {
+  const btn = $('mic-go');
+  btn.disabled = true;
+  micMsg('Waiting for the microphone…');
+  let stream;
+  try {
+    const dev = $('mic-device').value;
+    stream = window.__micTestStream || (await navigator.mediaDevices.getUserMedia({ audio: { ...(dev && { deviceId: { exact: dev } }), echoCancellation: true, noiseSuppression: true, autoGainControl: true } }));
+  } catch (e) {
+    btn.disabled = false;
+    return micMsg(micError(e));
+  }
+  fillMicDevices(); // the names show up once access is granted
+  micMsg('Loading Whisper (this takes about 10 seconds)…');
+  let sess;
+  try {
+    sess = await api('/api/dictate/start', { method: 'POST', body: { language: $('tr-lang').value } });
+  } catch (e) {
+    stream.getTracks().forEach((t) => t.stop());
+    btn.disabled = false;
+    return micMsg(e.message);
+  }
+  try {
+    const ctx = new AudioContext({ sampleRate: 16000 });
+    await ctx.resume();
+    await ctx.audioWorklet.addModule('/mic-worklet.js');
+    const node = new AudioWorkletNode(ctx, 'mic-tap');
+    ctx.createMediaStreamSource(stream).connect(node); // not connected to the speakers: no echo
+    mic = { id: sess.id, stream, ctx, node, carry: new Float32Array(0), t: 0, noise: 0.005, speaking: false, buf: [], pre: [], silence: 0, voiced: 0, startT: 0, seq: 0, pending: 0, results: new Map(), nextShow: 0, text: [] };
+    node.port.onmessage = (e) => micFeed(e.data);
+    mic.beat = setInterval(() => fetch('/api/dictate').catch(() => {}), 60000); // lets the server know we are still here
+  } catch (e) {
+    stream.getTracks().forEach((t) => t.stop());
+    await api(`/api/dictate/${sess.id}/stop`, { method: 'POST' }).catch(() => {});
+    btn.disabled = false;
+    return micMsg('Could not start listening: ' + e.message);
+  }
+  btn.disabled = false;
+  btn.textContent = '■ Stop';
+  $('mic-text').hidden = false;
+  $('mic-text').textContent = '';
+  $('mic-actions').hidden = true;
+  micMsg('Listening… speak, then pause.');
+}
+
+function micFeed(block) {
+  const m = mic;
+  if (!m || m.stopping) return;
+  const all = new Float32Array(m.carry.length + block.length);
+  all.set(m.carry);
+  all.set(block, m.carry.length);
+  let i = 0;
+  for (; i + MIC_FRAME <= all.length; i += MIC_FRAME) micFrame(m, all.subarray(i, i + MIC_FRAME));
+  m.carry = all.slice(i);
+}
+
+// One 20 ms frame: loudness decides whether you are speaking; 0.7 s of quiet ends a sentence.
+function micFrame(m, f) {
+  let sum = 0;
+  for (let i = 0; i < f.length; i++) sum += f[i] * f[i];
+  const rms = Math.sqrt(sum / f.length);
+  m.t += 0.02;
+  const bar = $('mic-level');
+  if (bar) bar.style.width = Math.min(100, rms * 500) + '%';
+  if (!m.speaking) m.noise = Math.min(0.03, Math.max(0.002, m.noise * 0.95 + rms * 0.05)); // learns the room's background level
+  const loud = rms > Math.max(0.012, m.noise * 3);
+  const frame = f.slice();
+  if (loud) {
+    if (!m.speaking) {
+      m.speaking = true;
+      m.buf = [...m.pre];
+      m.startT = Math.max(0, m.t - 0.02 * (m.pre.length + 1));
+      m.silence = 0;
+      m.voiced = 0;
+    }
+    m.buf.push(frame);
+    m.silence = 0;
+    m.voiced++;
+  } else if (m.speaking) {
+    m.buf.push(frame);
+    if (++m.silence >= 35) micEnd(m);
+  } else {
+    m.pre.push(frame); // keep the last 0.3 s so the start of a word is not clipped
+    if (m.pre.length > 15) m.pre.shift();
+  }
+  if (m.speaking && m.buf.length >= 1250) micEnd(m); // 25 s without a pause: cut here anyway
+}
+
+function micEnd(m) {
+  const frames = m.buf.slice(0, m.buf.length - Math.max(0, m.silence - 12)); // keep 0.25 s of the pause
+  const voiced = m.voiced;
+  Object.assign(m, { speaking: false, buf: [], pre: [], silence: 0, voiced: 0 });
+  if (voiced < 10) return; // under 0.2 s of sound: a click or a cough
+  const pcm = new Int16Array(frames.length * MIC_FRAME);
+  frames.forEach((fr, k) => fr.forEach((v, j) => (pcm[k * MIC_FRAME + j] = Math.max(-1, Math.min(1, v)) * 32767)));
+  const seq = m.seq++;
+  m.pending++;
+  showMic(m);
+  fetch(`/api/dictate/${m.id}/chunk?seq=${seq}&offset=${m.startT.toFixed(2)}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: pcm.buffer })
+    .then(async (r) => {
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error);
+      return j.text;
+    })
+    .catch((e) => {
+      micMsg('One sentence could not be transcribed: ' + e.message);
+      return '';
+    })
+    .then((text) => m.results.set(seq, text))
+    .finally(() => {
+      m.pending--;
+      showMic(m);
+    });
+}
+
+// sentences can finish out of order: show them in the order they were spoken
+function showMic(m) {
+  while (m.results.has(m.nextShow)) {
+    const t = m.results.get(m.nextShow);
+    m.results.delete(m.nextShow++);
+    if (t) m.text.push(t);
+  }
+  const box = $('mic-text');
+  if (box) {
+    box.textContent = m.text.join(' ') + (m.pending ? ' …' : '');
+    box.scrollTop = box.scrollHeight;
+  }
+}
+
+async function stopDictation() {
+  const m = mic;
+  if (!m) return;
+  m.stopping = true;
+  const btn = $('mic-go');
+  if (btn) btn.disabled = true;
+  micMsg('Finishing…');
+  if (m.speaking) micEnd(m);
+  clearInterval(m.beat);
+  m.node.port.onmessage = null;
+  m.node.disconnect();
+  m.stream.getTracks().forEach((t) => t.stop());
+  m.ctx.close().catch(() => {});
+  while (m.pending) await new Promise((r) => setTimeout(r, 150));
+  showMic(m);
+  let res = null;
+  try {
+    res = await api(`/api/dictate/${m.id}/stop`, { method: 'POST' });
+  } catch (e) {
+    micMsg(e.message);
+  }
+  mic = null;
+  if ($('mic-go')) {
+    $('mic-go').disabled = false;
+    $('mic-go').textContent = '🎤 Start listening';
+    $('mic-level').style.width = '0';
+    $('mic-actions').hidden = !m.text.length;
+    if (res) micMsg(res.transcript ? `Saved in the list below as "${res.transcript.name}" (with .srt and .txt downloads).` : 'Nothing was heard.');
+  }
+  state.transcripts = await api('/api/transcribe');
+  if (state.mode === 'transcribe') renderTranscriptList();
+}
+
+// closing or reloading the window must not leave the microphone session (and Whisper on the GPU) running
+window.addEventListener('pagehide', () => {
+  if (mic) navigator.sendBeacon(`/api/dictate/${mic.id}/stop`);
+});
 
 async function startTranscribe(path) {
   if (!path) return;
@@ -852,6 +1310,11 @@ function renderImageList() {
         const edit = document.createElement('button');
         edit.textContent = 'Edit this';
         edit.onclick = () => {
+          if (!$('im-init')) {
+            attachResult(`image:${j.id}/${f.file}`, `${j.id}/${f.file}`, `/api/image/${j.id}/${f.file}`);
+            $('input').value = j.prompt;
+            return autosize();
+          }
           setInitImage(`image:${j.id}/${f.file}`, `${j.id}/${f.file}`);
           $('im-prompt').value = j.prompt;
           $('im-prompt').focus();
@@ -890,6 +1353,764 @@ function onImageEvent(ev) {
   if (state.engine && ['loading', 'running'].includes(ev.status)) state.engine.loaded = null;
   updateBrand();
   if (state.mode === 'image') renderImageList();
+}
+
+// ---- vector mode ----------------------------------------------------------
+
+let vcRef = null; // { path, name }: a reference picture for tracing, or to guide SDXL
+let vcBase = null; // id of an earlier drawing the chat model should edit
+
+function renderVector(ph) {
+  ph.hidden = false;
+  if (ph.dataset.view !== 'vector') {
+    ph.dataset.view = 'vector';
+    ph.style.textAlign = 'left';
+    ph.innerHTML = `
+      <div class="tr-wrap">
+        <h2>Vector</h2>
+        <p class="muted">Make drawings for Illustrator, Inkscape, cutters and print shops: SVG and EPS files, from a description or from a picture.</p>
+        <div id="vc-setup"></div>
+        <div class="row"><label class="muted">How <select id="vc-method">
+          <option value="sdxl">Describe it: SDXL paints it, then it is traced (best for illustrations and logos)</option>
+          <option value="llm">Describe it: the chat model writes the shapes (only for very simple icons; crude otherwise)</option>
+          <option value="trace">Trace a picture (an exact copy of your image)</option>
+        </select></label></div>
+        <textarea id="vc-prompt" rows="3" class="wide" placeholder="Describe the drawing…"></textarea>
+        <div id="vc-base" class="muted"></div>
+        <div class="row" id="vc-ref-row">
+          <input id="vc-file" type="file" accept="image/*" hidden>
+          <button id="vc-pick" type="button">Choose a reference picture…</button>
+          <span id="vc-ref" class="muted"></span>
+        </div>
+        <div class="row" id="vc-llm-row">
+          <label class="muted">Model <select id="vc-model"></select></label>
+          <label class="muted">Shape <select id="vc-aspect"><option value="square">Square</option><option value="wide">Wide</option><option value="tall">Tall</option></select></label>
+          <label class="muted" title="The model reasons before it draws: slower, but the drawings are noticeably better"><input type="checkbox" id="vc-think" checked> Think longer</label>
+        </div>
+        <div class="row" id="vc-sdxl-row">
+          <label class="muted">Image model <select id="vc-imodel"></select></label>
+          <label class="muted" id="vc-strength-label">Follow the picture <input id="vc-strength" type="range" min="0.2" max="0.95" step="0.05" value="0.6"> <span id="vc-strength-val">0.6</span></label>
+        </div>
+        <div class="row" id="vc-trace-row">
+          <label class="muted">Colors <select id="vc-colors"><option value="color">Full color</option><option value="binary">Black and white</option></select></label>
+          <label class="muted">Detail <input id="vc-detail" type="range" min="1" max="5" step="1" value="3"> <span id="vc-detail-val">3</span></label>
+          <label class="muted"><input type="checkbox" id="vc-nobg"> Remove the white background</label>
+        </div>
+        <div class="row">
+          <label class="muted">EPS width in mm <input id="vc-width" type="number" min="5" max="5000" placeholder="(as drawn)" class="num"></label>
+          <button id="vc-go" class="primary">Create</button>
+        </div>
+        <div id="vc-msg" class="muted"></div>
+        <div id="vc-list"></div>
+      </div>`;
+    $('vc-method').onchange = updateVectorForm;
+    $('vc-go').onclick = createVector;
+    $('vc-pick').onclick = () => $('vc-file').click();
+    $('vc-strength').oninput = (e) => ($('vc-strength-val').textContent = e.target.value);
+    $('vc-detail').oninput = (e) => ($('vc-detail-val').textContent = e.target.value);
+    $('vc-file').onchange = async (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      $('vc-msg').textContent = `Uploading ${f.name}…`;
+      try {
+        const res = await fetch('/api/upload?name=' + encodeURIComponent(f.name), { method: 'POST', body: f });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        setVectorRef(data.path, f.name);
+        $('vc-msg').textContent = '';
+      } catch (err) {
+        $('vc-msg').textContent = 'Upload failed: ' + err.message;
+      }
+      e.target.value = '';
+    };
+  }
+  const fill = (id, list) => {
+    const sel = $(id);
+    const keep = sel.value;
+    sel.innerHTML = '';
+    for (const m of list) sel.append(new Option(m.name, m.id));
+    if (keep && list.some((m) => m.id === keep)) sel.value = keep;
+  };
+  const vcLlms = state.models.filter((m) => m.kind !== 'image');
+  const vcHadChoice = !!$('vc-model').value;
+  fill('vc-model', vcLlms);
+  if (!vcHadChoice && bestQualityModel(vcLlms)) $('vc-model').value = bestQualityModel(vcLlms).id;
+  fill('vc-imodel', state.models.filter((m) => m.kind === 'image'));
+  // without SDXL set up, start on the method that works with just a chat model
+  if (!ph.dataset.methodChosen) {
+    ph.dataset.methodChosen = '1';
+    if (!(state.image?.installed && state.models.some((m) => m.kind === 'image'))) $('vc-method').value = 'llm';
+  }
+  renderVectorSetup();
+  updateVectorForm();
+  renderVectorList();
+}
+
+function renderVectorSetup() {
+  const box = $('vc-setup');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!state.vector?.installed) {
+    box.innerHTML = '<div class="tr-err">The vector tools are not installed yet (about 40 MB, from the internet).</div>';
+    const b = document.createElement('button');
+    b.className = 'primary';
+    b.textContent = 'Install the vector tools';
+    b.onclick = async () => {
+      b.disabled = true;
+      b.textContent = 'Installing… (progress is shown at the bottom)';
+      try {
+        await api('/api/components/install', { method: 'POST', body: { feature: 'vector' } });
+      } catch (e) {
+        b.disabled = false;
+        b.textContent = 'Install the vector tools';
+        $('vc-msg').textContent = e.message;
+      }
+    };
+    box.append(b);
+  }
+}
+
+function updateVectorForm() {
+  const method = $('vc-method').value;
+  const hasLlm = state.models.some((m) => m.kind !== 'image');
+  const hasImg = state.models.some((m) => m.kind === 'image');
+  $('vc-prompt').hidden = method === 'trace';
+  $('vc-llm-row').hidden = method !== 'llm';
+  $('vc-sdxl-row').hidden = method !== 'sdxl';
+  $('vc-strength-label').hidden = !vcRef;
+  $('vc-trace-row').hidden = method === 'llm';
+  $('vc-ref-row').hidden = method === 'llm';
+  $('vc-pick').textContent = method === 'trace' ? 'Choose the picture to trace…' : 'Use a reference picture (optional)…';
+  $('vc-base').textContent = '';
+  if (method === 'llm' && vcBase) {
+    $('vc-base').innerHTML = `Editing drawing ${esc(vcBase)}. <button id="vc-unbase" type="button">Start a new drawing instead</button>`;
+    $('vc-unbase').onclick = () => {
+      vcBase = null;
+      updateVectorForm();
+    };
+  }
+  $('vc-prompt').placeholder = method === 'llm' && vcBase ? 'What should change? For example: make the star bigger and the background dark blue' : 'Describe the drawing…';
+  const hints = [];
+  if (method === 'llm' && !hasLlm) hints.push('Add a chat model first (Settings > Models).');
+  if (method === 'sdxl' && (!hasImg || !state.image?.installed)) hints.push('SDXL needs the image tools and an SDXL model: set them up in Image mode first.');
+  if (method === 'trace' && !vcRef) hints.push('Choose a picture to trace.');
+  $('vc-msg').textContent = hints.join(' ');
+}
+
+function setVectorRef(path, name) {
+  vcRef = path ? { path, name } : null;
+  const span = $('vc-ref');
+  span.textContent = vcRef ? `Using: ${vcRef.name}` : '';
+  if (vcRef) {
+    const x = document.createElement('button');
+    x.textContent = '✕';
+    x.title = 'Remove the picture';
+    x.onclick = () => {
+      setVectorRef(null);
+      updateVectorForm();
+    };
+    span.append(' ', x);
+  }
+  updateVectorForm();
+}
+
+async function createVector() {
+  const method = $('vc-method').value;
+  const msg = $('vc-msg');
+  msg.textContent = '';
+  try {
+    const body = {
+      method,
+      prompt: $('vc-prompt').value,
+      reference: method === 'llm' ? undefined : vcRef?.path,
+      modelId: $('vc-model').value,
+      imageModelId: $('vc-imodel').value,
+      aspect: $('vc-aspect').value,
+      thinking: $('vc-think').checked,
+      strength: +$('vc-strength').value,
+      colormode: $('vc-colors').value,
+      detail: +$('vc-detail').value,
+      // SDXL paints on a white page, so that is always dropped; for a traced picture it is your choice
+      removeBackground: method === 'sdxl' ? true : $('vc-nobg').checked,
+      widthMm: $('vc-width').value ? +$('vc-width').value : undefined,
+      baseJob: method === 'llm' ? vcBase || undefined : undefined,
+    };
+    await api('/api/vector', { method: 'POST', body });
+    state.vector = await api('/api/vector');
+    vcBase = null;
+    renderVector($('placeholder'));
+  } catch (e) {
+    msg.textContent = e.message;
+  }
+}
+
+function renderVectorList() {
+  const box = $('vc-list');
+  if (!box) return;
+  box.innerHTML = '';
+  const stages = { tracing: 'Tracing the picture…', converting: 'Making the EPS…', drawing: 'Drawing…', 'loading the model': 'Loading the model…' };
+  const how = { llm: 'written by the chat model', sdxl: 'painted by SDXL, then traced', trace: 'traced from a picture' };
+  for (const j of state.vector?.jobs || []) {
+    const el = document.createElement('div');
+    el.className = 'tr-job';
+    const active = ['queued', 'loading', 'running'].includes(j.status);
+    el.innerHTML = `<div class="tr-head"><span>${esc(j.prompt || (j.method === 'trace' ? 'Traced picture' : 'Drawing'))}${j.refine ? ' <small class="muted">(edit)</small>' : ''}</span><span class="pill ${j.status === 'done' ? 'ok' : j.status === 'error' ? 'bad' : ''}">${esc(active ? stages[j.stage] || j.status : j.status)}</span></div>
+      <small class="muted">${esc(how[j.method] || '')}${j.modelName ? ' · ' + esc(j.modelName) : ''}${j.method !== 'llm' ? ` · ${j.colormode === 'binary' ? 'black and white' : 'color'} · detail ${j.detail}` : ''}${j.widthMm ? ` · ${j.widthMm} mm wide` : ''}</small>`;
+    if (active) {
+      const stop = document.createElement('button');
+      stop.textContent = 'Cancel';
+      stop.onclick = () => api(`/api/vector/${j.id}/cancel`, { method: 'POST' });
+      el.append(stop);
+    } else if (j.status === 'error') {
+      el.insertAdjacentHTML('beforeend', `<div class="tr-err">${esc(j.error || 'Failed')}</div>`);
+    }
+    if (j.files?.svg) {
+      const row = document.createElement('div');
+      row.className = 'vc-result';
+      row.innerHTML = `<a href="/api/vector/${j.id}/out.svg" target="_blank" class="vc-preview"><img src="/api/vector/${j.id}/out.svg" alt="The drawing"></a>`;
+      const side = document.createElement('div');
+      side.className = 'vc-actions';
+      const link = (label, href) => {
+        const a = document.createElement('a');
+        a.href = href;
+        a.innerHTML = `<button type="button">${label}</button>`;
+        return a;
+      };
+      side.append(link('Save SVG', `/api/vector/${j.id}/out.svg?download=1`));
+      if (j.files.eps) side.append(link('Save EPS', `/api/vector/${j.id}/out.eps?download=1`));
+      if (j.method === 'llm') {
+        const edit = document.createElement('button');
+        edit.textContent = 'Edit with the model';
+        edit.onclick = () => {
+          if (!$('vc-method')) return setBase('vector', j.id, 'the drawing');
+          $('vc-method').value = 'llm';
+          vcBase = j.id;
+          updateVectorForm();
+          $('vc-prompt').value = '';
+          $('vc-prompt').focus();
+        };
+        side.append(edit);
+      }
+      const pic = j.files.source || j.files.reference;
+      if (pic) {
+        const again = document.createElement('button');
+        again.textContent = 'Trace this picture again';
+        again.onclick = async () => {
+          if (!$('vc-method')) return attachResult(`vector:${j.id}/${pic}`, `${j.id}/${pic}`, `/api/vector/${j.id}/${pic}`);
+          $('vc-method').value = 'trace';
+          setVectorRef(`vector:${j.id}/${pic}`, `${j.id}/${pic}`);
+        };
+        side.append(again);
+      }
+      row.append(side);
+      el.append(row);
+    }
+    if (!active) {
+      const del = document.createElement('button');
+      del.textContent = 'Delete';
+      del.onclick = async () => {
+        if (!confirm('Delete this drawing and its files?')) return;
+        await api(`/api/vector/${j.id}`, { method: 'DELETE' });
+        state.vector = await api('/api/vector');
+        renderVectorList();
+      };
+      el.append(del);
+    }
+    box.append(el);
+  }
+  if (!state.vector?.jobs?.length) box.innerHTML = '<p class="muted">No drawings yet.</p>';
+}
+
+function onVectorEvent(ev) {
+  const job = { ...ev };
+  delete job.type;
+  const jobs = (state.vector ||= { installed: true, jobs: [] }).jobs;
+  const i = jobs.findIndex((x) => x.id === ev.id);
+  if (i >= 0) jobs[i] = job;
+  else jobs.unshift(job);
+  updateBrand();
+  if (state.mode === 'vector') renderVectorList();
+}
+
+// ---- 3D mode ---------------------------------------------------------------
+
+// A small viewer for STL files that draws on a plain canvas (no libraries, works everywhere): each triangle is shaded
+// by how much it faces the light and drawn far to near.
+const meshCache = new Map(); // job id -> parsed mesh
+
+function parseStl(buf) {
+  const dv = new DataView(buf);
+  let n = buf.byteLength >= 84 ? dv.getUint32(80, true) : 0;
+  let tris;
+  if (buf.byteLength === 84 + n * 50) {
+    tris = new Float32Array(n * 9);
+    for (let i = 0; i < n; i++) {
+      const o = 84 + i * 50 + 12;
+      for (let k = 0; k < 9; k++) tris[i * 9 + k] = dv.getFloat32(o + k * 4, true);
+    }
+  } else {
+    // a text STL
+    const nums = [...new TextDecoder().decode(buf).matchAll(/vertex\s+(\S+)\s+(\S+)\s+(\S+)/g)];
+    n = Math.floor(nums.length / 3);
+    tris = new Float32Array(n * 9);
+    for (let i = 0; i < n * 3; i++) for (let k = 0; k < 3; k++) tris[i * 3 + k] = parseFloat(nums[i][k + 1]);
+  }
+  const lo = [Infinity, Infinity, Infinity];
+  const hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < n * 3; i++) for (let a = 0; a < 3; a++) {
+    const v = tris[i * 3 + a];
+    if (v < lo[a]) lo[a] = v;
+    if (v > hi[a]) hi[a] = v;
+  }
+  const center = lo.map((l, a) => (l + hi[a]) / 2);
+  const radius = Math.max(1e-6, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2);
+  const normals = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const t = i * 9;
+    const ux = tris[t + 3] - tris[t], uy = tris[t + 4] - tris[t + 1], uz = tris[t + 5] - tris[t + 2];
+    const vx = tris[t + 6] - tris[t], vy = tris[t + 7] - tris[t + 1], vz = tris[t + 8] - tris[t + 2];
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const l = Math.hypot(nx, ny, nz) || 1;
+    normals[i * 3] = nx / l; normals[i * 3 + 1] = ny / l; normals[i * 3 + 2] = nz / l;
+  }
+  return { n, tris, normals, center, radius, size: hi.map((h, a) => h - lo[a]) };
+}
+
+async function loadMesh(id) {
+  if (!meshCache.has(id)) {
+    const res = await fetch(`/api/3d/${id}/out.stl`);
+    if (!res.ok) throw new Error('The solid could not be loaded');
+    meshCache.set(id, parseStl(await res.arrayBuffer()));
+  }
+  return meshCache.get(id);
+}
+
+const SHADES = Array.from({ length: 32 }, (_, i) => {
+  const k = 0.22 + (0.78 * i) / 31;
+  return `rgb(${Math.round(104 * k + 12)},${Math.round(156 * k + 14)},${Math.round(232 * k + 8)})`;
+});
+
+// view: { az, el, zoom } in radians. `step` > 1 draws every nth triangle (used while dragging a big model).
+function drawMesh(canvas, mesh, view, step = 1) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  if (!mesh || !mesh.n) return;
+  const ca = Math.cos(view.az), sa = Math.sin(view.az), ce = Math.cos(view.el), se = Math.sin(view.el);
+  const s = (0.44 * Math.min(W, H) / mesh.radius) * view.zoom;
+  const [cx, cy, cz] = mesh.center;
+  const { tris, normals, n } = mesh;
+  const BUCKETS = 600;
+  const keep = [];
+  const depth = new Float32Array(n);
+  const sx = new Float32Array(n * 3), sy = new Float32Array(n * 3);
+  const level = new Uint8Array(n);
+  for (let i = 0; i < n; i += step) {
+    const nx = normals[i * 3], ny = normals[i * 3 + 1], nz = normals[i * 3 + 2];
+    const ny1 = nx * sa + ny * ca;
+    const nd = -ny1 * ce + nz * se; // toward the viewer
+    if (nd <= 0) continue; // facing away
+    const nxp = nx * ca - ny * sa;
+    const nup = nz * ce + ny1 * se;
+    const lit = Math.max(0, nxp * -0.35 + nup * 0.55 + nd * 0.76);
+    level[i] = Math.min(31, Math.round(31 * Math.min(1, 0.12 + lit)));
+    let d = 0;
+    for (let v = 0; v < 3; v++) {
+      const x = tris[i * 9 + v * 3] - cx, y = tris[i * 9 + v * 3 + 1] - cy, z = tris[i * 9 + v * 3 + 2] - cz;
+      const xp = x * ca - y * sa;
+      const y1 = x * sa + y * ca;
+      sx[i * 3 + v] = W / 2 + xp * s;
+      sy[i * 3 + v] = H / 2 - (z * ce + y1 * se) * s;
+      d += -y1 * ce + z * se;
+    }
+    depth[i] = d / 3;
+    keep.push(i);
+  }
+  // counting sort by depth, far to near
+  const r = mesh.radius;
+  const bucket = (d) => Math.max(0, Math.min(BUCKETS - 1, Math.floor(((d + r) / (2 * r)) * BUCKETS)));
+  const counts = new Uint32Array(BUCKETS + 1);
+  for (const i of keep) counts[bucket(depth[i]) + 1]++;
+  for (let b = 0; b < BUCKETS; b++) counts[b + 1] += counts[b];
+  const order = new Uint32Array(keep.length);
+  for (const i of keep) order[counts[bucket(depth[i])]++] = i;
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 0.8;
+  for (let k = 0; k < order.length; k++) {
+    const i = order[k];
+    const col = SHADES[level[i]];
+    ctx.fillStyle = col;
+    ctx.strokeStyle = col;
+    ctx.beginPath();
+    ctx.moveTo(sx[i * 3], sy[i * 3]);
+    ctx.lineTo(sx[i * 3 + 1], sy[i * 3 + 1]);
+    ctx.lineTo(sx[i * 3 + 2], sy[i * 3 + 2]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+const THUMB_VIEW = { az: -0.65, el: 0.5, zoom: 1 };
+const fmtSize3d = (s) => (s ? s.map((v) => +v.toFixed(1)).join(' × ') + ' mm' : '');
+let viewerJob = null;
+let viewerView = null;
+let viewerRaf = 0;
+
+async function openViewer(j) {
+  const dlg = $('viewer-dialog');
+  viewerJob = j;
+  viewerView = { ...THUMB_VIEW };
+  $('viewer-title').textContent = (j.prompt || 'Carved from pictures').slice(0, 70);
+  $('viewer-info').textContent = 'Loading…';
+  $('viewer-save').href = `/api/3d/${j.id}/out.stl?download=1`;
+  if (!dlg.open) dlg.showModal();
+  try {
+    const mesh = await loadMesh(j.id);
+    $('viewer-info').textContent = `${fmtSize3d(j.size || mesh.size)} · ${mesh.n.toLocaleString()} triangles`;
+    drawMesh($('viewer-canvas'), mesh, viewerView);
+  } catch (e) {
+    $('viewer-info').textContent = e.message;
+  }
+}
+
+function redrawViewer(dragging) {
+  if (viewerRaf || !viewerJob) return;
+  viewerRaf = requestAnimationFrame(() => {
+    viewerRaf = 0;
+    const mesh = meshCache.get(viewerJob.id);
+    if (mesh) drawMesh($('viewer-canvas'), mesh, viewerView, dragging && mesh.n > 25000 ? 3 : 1);
+  });
+}
+
+{
+  const cv = $('viewer-canvas');
+  let drag = null;
+  cv.onpointerdown = (e) => {
+    drag = { x: e.clientX, y: e.clientY };
+    cv.setPointerCapture(e.pointerId);
+  };
+  cv.onpointermove = (e) => {
+    if (!drag || !viewerView) return;
+    viewerView.az += (e.clientX - drag.x) * 0.01;
+    viewerView.el = Math.max(-1.55, Math.min(1.55, viewerView.el + (e.clientY - drag.y) * 0.01));
+    drag = { x: e.clientX, y: e.clientY };
+    redrawViewer(true);
+  };
+  cv.onpointerup = () => {
+    drag = null;
+    redrawViewer(false);
+  };
+  cv.onwheel = (e) => {
+    e.preventDefault();
+    if (!viewerView) return;
+    viewerView.zoom = Math.max(0.3, Math.min(6, viewerView.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    redrawViewer(false);
+  };
+  $('viewer-reset').onclick = () => {
+    viewerView = { ...THUMB_VIEW };
+    redrawViewer(false);
+  };
+  $('viewer-close').onclick = () => $('viewer-dialog').close();
+}
+
+let tdViews = {}; // front / side / top -> { path, name }
+let tdBase = null; // id of an earlier design the chat model should edit
+
+function renderThreeD(ph) {
+  ph.hidden = false;
+  if (ph.dataset.view !== '3d') {
+    ph.dataset.view = '3d';
+    ph.style.textAlign = 'left';
+    ph.innerHTML = `
+      <div class="tr-wrap">
+        <h2>3D</h2>
+        <p class="muted">Make STL files for 3D printing and CAD: from a description with exact sizes, or by carving a solid from pictures.</p>
+        <div id="td-setup"></div>
+        <div class="row"><label class="muted">How <select id="td-method">
+          <option value="scad">Describe it: the chat model designs it (OpenSCAD), at the sizes you give</option>
+          <option value="photos">From pictures: carve a solid from front, side and top outlines</option>
+        </select></label></div>
+        <div id="td-scad">
+          <textarea id="td-prompt" rows="3" class="wide" placeholder="Describe the part… for example: a rectangular pen holder with a flat base and four walls"></textarea>
+          <div id="td-base" class="muted"></div>
+          <div class="row">
+            <label class="muted">Model <select id="td-model"></select></label>
+            <label class="muted" title="The model reasons before it designs: slower, but the designs are noticeably better"><input type="checkbox" id="td-think" checked> Think longer</label>
+          </div>
+          <textarea id="td-sizetext" rows="2" class="wide" placeholder="Other measurements, for example: wall 3 mm, hole diameter 8 mm, handle 120 mm long"></textarea>
+          <details><summary class="muted">Write the OpenSCAD yourself instead</summary>
+            <textarea id="td-code" rows="9" class="wide mono" spellcheck="false" placeholder="cube([20, 20, 5]);"></textarea>
+            <small class="muted">If this box has code, it is built as it is and the description is ignored. "Open the script" on a result fills it in so you can adjust it.</small>
+          </details>
+        </div>
+        <div id="td-photos" hidden>
+          <p class="muted">Give outlines of the object seen straight-on, on a plain background (or cut out with a transparent background): the <b>front</b>, the <b>right side</b> (front on the left), and from <b>above</b> (front edge at the bottom). Two or three pictures work best. Holes and hollows that don't show in an outline can't be recovered.</p>
+          <div id="td-views"></div>
+          <div class="row">
+            <label class="muted">Detail <select id="td-quality"><option value="1">Draft (fast)</option><option value="2" selected>Normal</option><option value="3">Fine (slower)</option></select></label>
+            <label class="muted">Background <select id="td-bg"><option value="auto">Find it automatically</option><option value="light">Light background, dark object</option><option value="dark">Dark background, light object</option></select></label>
+          </div>
+        </div>
+        <div class="row">
+          <label class="muted">Width (X) mm <input id="td-x" type="number" min="1" max="2000" class="num"></label>
+          <label class="muted">Depth (Y) mm <input id="td-y" type="number" min="1" max="2000" class="num"></label>
+          <label class="muted">Height (Z) mm <input id="td-z" type="number" min="1" max="2000" class="num"></label>
+          <button id="td-go" class="primary">Create</button>
+        </div>
+        <div id="td-msg" class="muted"></div>
+        <div id="td-list"></div>
+      </div>`;
+    $('td-method').onchange = updateThreeDForm;
+    $('td-go').onclick = createThreeD;
+    $('td-views').append(
+      ...[['front', 'Front'], ['side', 'Right side'], ['top', 'Top']].map(([k, label]) => {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = `<input type="file" accept="image/*" hidden id="td-file-${k}"><button type="button" id="td-pick-${k}">${label} picture…</button><span class="muted" id="td-name-${k}"></span>`;
+        return row;
+      }),
+    );
+    for (const k of ['front', 'side', 'top']) {
+      $(`td-pick-${k}`).onclick = () => $(`td-file-${k}`).click();
+      $(`td-file-${k}`).onchange = async (e) => {
+        const f = e.target.files[0];
+        if (!f) return;
+        $('td-msg').textContent = `Uploading ${f.name}…`;
+        try {
+          const res = await fetch('/api/upload?name=' + encodeURIComponent(f.name), { method: 'POST', body: f });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error);
+          tdViews[k] = { path: data.path, name: f.name };
+          renderThreeDViews();
+          $('td-msg').textContent = '';
+        } catch (err) {
+          $('td-msg').textContent = 'Upload failed: ' + err.message;
+        }
+        e.target.value = '';
+      };
+    }
+  }
+  const sel = $('td-model');
+  const keep = sel.value;
+  sel.innerHTML = '';
+  const llms = state.models.filter((m) => m.kind !== 'image');
+  for (const m of llms) sel.append(new Option(m.name, m.id));
+  if (keep && llms.some((m) => m.id === keep)) sel.value = keep;
+  else if (bestQualityModel(llms)) sel.value = bestQualityModel(llms).id;
+  renderThreeDViews();
+  renderThreeDSetup();
+  updateThreeDForm();
+  renderThreeDList();
+}
+
+function renderThreeDViews() {
+  for (const k of ['front', 'side', 'top']) {
+    const span = $(`td-name-${k}`);
+    if (!span) return;
+    const v = tdViews[k];
+    span.textContent = v ? v.name : '';
+    if (v) {
+      const x = document.createElement('button');
+      x.textContent = '✕';
+      x.title = 'Remove this picture';
+      x.onclick = () => {
+        delete tdViews[k];
+        renderThreeDViews();
+      };
+      span.append(' ', x);
+    }
+  }
+}
+
+function renderThreeDSetup() {
+  const box = $('td-setup');
+  if (!box) return;
+  box.innerHTML = '';
+  const st = state.threed || {};
+  if (st.scad && st.carve) return;
+  const missing = [!st.scad && 'OpenSCAD (about 21 MB)', !st.carve && 'the carving tools (about 60 MB)'].filter(Boolean).join(' and ');
+  box.innerHTML = `<div class="tr-err">Not installed yet: ${esc(missing)}.</div>`;
+  const b = document.createElement('button');
+  b.className = 'primary';
+  b.textContent = 'Install the 3D tools';
+  b.onclick = async () => {
+    b.disabled = true;
+    b.textContent = 'Installing… (progress is shown at the bottom)';
+    try {
+      await api('/api/components/install', { method: 'POST', body: { feature: 'threed' } });
+    } catch (e) {
+      b.disabled = false;
+      b.textContent = 'Install the 3D tools';
+      $('td-msg').textContent = e.message;
+    }
+  };
+  box.append(b);
+}
+
+function updateThreeDForm() {
+  const method = $('td-method').value;
+  $('td-scad').hidden = method !== 'scad';
+  $('td-photos').hidden = method !== 'photos';
+  $('td-base').textContent = '';
+  if (method === 'scad' && tdBase) {
+    $('td-base').innerHTML = `Editing design ${esc(tdBase)}. <button id="td-unbase" type="button">Start a new design instead</button>`;
+    $('td-unbase').onclick = () => {
+      tdBase = null;
+      updateThreeDForm();
+    };
+  }
+  $('td-prompt').placeholder = method === 'scad' && tdBase ? 'What should change? For example: make the walls thicker and add a hole in the base' : 'Describe the part… for example: a rectangular pen holder with a flat base and four walls';
+  const hints = [];
+  if (!state.models.some((m) => m.kind !== 'image') && method === 'scad') hints.push('Add a chat model first (Settings > Models).');
+  $('td-msg').textContent = hints.join(' ');
+}
+
+async function createThreeD() {
+  const method = $('td-method').value;
+  const msg = $('td-msg');
+  msg.textContent = '';
+  const size = (id) => ($(id).value ? +$(id).value : undefined);
+  try {
+    const body = {
+      method,
+      sizeMm: { x: size('td-x'), y: size('td-y'), z: size('td-z') },
+      ...(method === 'scad'
+        ? { prompt: $('td-prompt').value, sizeText: $('td-sizetext').value, modelId: $('td-model').value, thinking: $('td-think').checked, baseJob: tdBase || undefined, code: $('td-code').value.trim() || undefined }
+        : { views: Object.fromEntries(Object.entries(tdViews).map(([k, v]) => [k, v.path])), quality: +$('td-quality').value, background: $('td-bg').value }),
+    };
+    await api('/api/3d', { method: 'POST', body });
+    state.threed = await api('/api/3d');
+    tdBase = null;
+    renderThreeD($('placeholder'));
+  } catch (e) {
+    msg.textContent = e.message;
+  }
+}
+
+function renderThreeDList() {
+  const box = $('td-list');
+  if (!box) return;
+  box.innerHTML = '';
+  const stages = { loading: 'Loading the model…', designing: 'Designing…', 'building the solid': 'Building the solid…', carving: 'Carving…', 'reading the pictures': 'Reading the pictures…', 'building the surface': 'Building the surface…' };
+  const how = { scad: 'designed by the chat model (OpenSCAD)', photos: 'carved from pictures' };
+  for (const j of state.threed?.jobs || []) {
+    const el = document.createElement('div');
+    el.className = 'tr-job';
+    const active = ['queued', 'loading', 'running'].includes(j.status);
+    const title = j.method === 'photos' ? `Carved from ${(j.views || []).join(', ')} picture${(j.views || []).length === 1 ? '' : 's'}` : j.manual ? 'Your OpenSCAD script' : j.prompt || 'Design';
+    el.innerHTML = `<div class="tr-head"><span>${esc(title)}${j.refine ? ' <small class="muted">(edit)</small>' : ''}</span><span class="pill ${j.status === 'done' ? 'ok' : j.status === 'error' ? 'bad' : ''}">${esc(active ? stages[j.stage] || j.status : j.status)}</span></div>
+      <small class="muted">${esc(how[j.method] || '')}${j.modelName ? ' · ' + esc(j.modelName) : ''}${j.size ? ' · ' + esc(fmtSize3d(j.size)) : ''}${j.triangles ? ' · ' + j.triangles.toLocaleString() + ' triangles' : ''}</small>`;
+    if (j.note) el.insertAdjacentHTML('beforeend', `<div class="muted">${esc(j.note)}</div>`);
+    if (j.warning) el.insertAdjacentHTML('beforeend', `<div class="warn">${esc(j.warning)}</div>`);
+    if (active) {
+      const stop = document.createElement('button');
+      stop.textContent = 'Cancel';
+      stop.onclick = () => api(`/api/3d/${j.id}/cancel`, { method: 'POST' });
+      el.append(stop);
+    } else if (j.status === 'error') {
+      el.insertAdjacentHTML('beforeend', `<div class="tr-err">${esc(j.error || 'Failed')}</div>`);
+    }
+    if (j.files?.stl) {
+      const row = document.createElement('div');
+      row.className = 'vc-result';
+      const thumb = document.createElement('canvas');
+      thumb.width = 240;
+      thumb.height = 180;
+      thumb.className = 'td-thumb';
+      thumb.title = 'Click to open the 3D view';
+      thumb.onclick = () => openViewer(j);
+      row.append(thumb);
+      loadMesh(j.id).then((mesh) => drawMesh(thumb, mesh, THUMB_VIEW)).catch(() => {});
+      const side = document.createElement('div');
+      side.className = 'vc-actions';
+      const btn = (label, fn) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.onclick = fn;
+        return b;
+      };
+      const link = (label, href) => {
+        const a = document.createElement('a');
+        a.href = href;
+        a.innerHTML = `<button type="button">${label}</button>`;
+        return a;
+      };
+      side.append(btn('View in 3D', () => openViewer(j)), link('Save STL', `/api/3d/${j.id}/out.stl?download=1`));
+      if (j.warning && j.files.scad && j.sizeAsked) {
+        // the design missed the size you asked for: wrap the same script in OpenSCAD's resize() so it hits it exactly
+        side.append(
+          btn('Scale it to the size I asked for', async () => {
+            const { x, y, z } = j.sizeAsked;
+            const code = await (await fetch(`/api/3d/${j.id}/model.scad`)).text();
+            try {
+              await api('/api/3d', { method: 'POST', body: { method: 'scad', sizeMm: j.sizeAsked, code: `// scaled to ${x || '-'} x ${y || '-'} x ${z || '-'} mm\nresize([${x || 0}, ${y || 0}, ${z || 0}]) {\n${code}\n}\n` } });
+              state.threed = await api('/api/3d');
+              renderThreeDList();
+            } catch (e) {
+              $('td-msg').textContent = e.message;
+            }
+          }),
+        );
+      }
+      if (j.files.scad) {
+        side.append(link('Save script', `/api/3d/${j.id}/model.scad?download=1`));
+        side.append(
+          btn('Open the script', async () => {
+            if (!$('td-method')) toAdvanced('3d'); // the script box lives on the advanced screen
+            $('td-method').value = 'scad';
+            $('td-code').value = await (await fetch(`/api/3d/${j.id}/model.scad`)).text();
+            $('td-code').closest('details').open = true;
+            updateThreeDForm();
+            $('td-code').focus();
+          }),
+        );
+        if (!j.manual) {
+          side.append(
+            btn('Edit with the model', () => {
+              if (!$('td-method')) return setBase('3d', j.id, 'the design');
+              $('td-method').value = 'scad';
+              tdBase = j.id;
+              updateThreeDForm();
+              $('td-prompt').value = '';
+              $('td-prompt').focus();
+            }),
+          );
+        }
+      }
+      row.append(side);
+      el.append(row);
+    }
+    if (!active) {
+      el.append(
+        (() => {
+          const del = document.createElement('button');
+          del.textContent = 'Delete';
+          del.onclick = async () => {
+            if (!confirm('Delete this solid and its files?')) return;
+            await api(`/api/3d/${j.id}`, { method: 'DELETE' });
+            meshCache.delete(j.id);
+            state.threed = await api('/api/3d');
+            renderThreeDList();
+          };
+          return del;
+        })(),
+      );
+    }
+    box.append(el);
+  }
+  if (!state.threed?.jobs?.length) box.innerHTML = '<p class="muted">Nothing here yet.</p>';
+}
+
+function onThreedEvent(ev) {
+  const job = { ...ev };
+  delete job.type;
+  const jobs = (state.threed ||= { scad: true, carve: true, jobs: [] }).jobs;
+  const i = jobs.findIndex((x) => x.id === ev.id);
+  if (i >= 0) jobs[i] = job;
+  else jobs.unshift(job);
+  updateBrand();
+  if (state.mode === '3d') renderThreeDList();
 }
 
 // ---- settings dialog -----------------------------------------------------
@@ -1030,7 +2251,41 @@ async function renderEngineTab() {
     box.innerHTML =
       card('Transcribe: Whisper', c.whisper.installed, c.whisper.installed ? `Uses ${c.whisper.source === 'private' ? 'its own private' : 'the system'} Python` : 'Needed for Transcribe mode') +
       card('Image: PyTorch + diffusers', c.image.installed, c.image.installed ? 'Ready for SDXL checkpoints' : 'Needed for Image mode (NVIDIA or Apple Silicon)') +
+      card('Vector: tracing + EPS tools', c.vector.installed, c.vector.installed ? 'Ready: traces pictures and writes SVG and EPS files' : 'Needed for Vector mode (about 40 MB)') +
+      card('3D: OpenSCAD + carving tools', c.threed.scad && c.threed.carve, c.threed.scad && c.threed.carve ? 'Ready: designs parts and carves solids from pictures' : `Needed for 3D mode (about 80 MB): ${[!c.threed.scad && 'OpenSCAD', !c.threed.carve && 'carving tools'].filter(Boolean).join(' and ')} missing`) +
       `<p class="muted">To install Whisper or the image tools, open <b>${IS_MAC ? 'Download components.command' : 'LLM Icarus - Download components'}</b> ${IS_MAC ? 'from the LLM Icarus folder in Application Support' : 'from the Start menu'}.</p>`;
+    if (!c.vector.installed) {
+      const b = document.createElement('button');
+      b.className = 'primary';
+      b.textContent = 'Install the vector tools';
+      b.onclick = async () => {
+        b.disabled = true;
+        b.textContent = 'Installing… (progress is shown at the bottom)';
+        try {
+          await api('/api/components/install', { method: 'POST', body: { feature: 'vector' } });
+        } catch (e) {
+          b.disabled = false;
+          alert(e.message);
+        }
+      };
+      box.append(b);
+    }
+    if (!(c.threed.scad && c.threed.carve)) {
+      const b = document.createElement('button');
+      b.className = 'primary';
+      b.textContent = 'Install the 3D tools';
+      b.onclick = async () => {
+        b.disabled = true;
+        b.textContent = 'Installing… (progress is shown at the bottom)';
+        try {
+          await api('/api/components/install', { method: 'POST', body: { feature: 'threed' } });
+        } catch (e) {
+          b.disabled = false;
+          alert(e.message);
+        }
+      };
+      box.append(b);
+    }
   } catch (e) {
     box.textContent = e.message;
   }
@@ -1085,7 +2340,7 @@ $('engines-check').onclick = async () => {
       }));
     } else box.append(updateRow('Chat and Code engine (llama.cpp)', [{ text: `Up to date (${c.installed})`, cls: 'ok' }]));
     // python tools
-    for (const [key, title] of [['whisper', 'Transcribe: Whisper'], ['image', 'Image: diffusers']]) {
+    for (const [key, title] of [['whisper', 'Transcribe: Whisper'], ['image', 'Image: diffusers'], ['vector', 'Vector: vtracer']]) {
       const p = r[key];
       if (p.error) box.append(fail(title, p.error));
       else if (!p.installed) box.append(updateRow(title, [{ text: 'Not installed' }]));
@@ -1331,6 +2586,47 @@ $('sb-resizer').addEventListener('dblclick', () => setSidebarWidth(SB_DEFAULT, t
 
 // ---- wiring --------------------------------------------------------------
 
+$('attach').onclick = () => $('attach-file').click();
+$('attach-file').onchange = (e) => {
+  addFiles([...e.target.files]);
+  e.target.value = '';
+};
+$('mic-open').onclick = () => {
+  state.adv.transcribe = true; // the microphone lives on the advanced Transcribe screen
+  renderMessages();
+  $('mic-go')?.click();
+};
+$('input').addEventListener('paste', (e) => {
+  const files = [...(e.clipboardData?.files || [])];
+  if (files.length && !state.adv[state.mode]) {
+    e.preventDefault();
+    addFiles(files);
+  }
+});
+// dropping a file anywhere in the window: use it, and never let the window navigate to it
+let dragDepth = 0;
+const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+window.addEventListener('dragenter', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth++;
+  document.body.classList.add('dropping');
+});
+window.addEventListener('dragover', (e) => hasFiles(e) && e.preventDefault());
+window.addEventListener('dragleave', (e) => {
+  if (hasFiles(e) && --dragDepth <= 0) {
+    dragDepth = 0;
+    document.body.classList.remove('dropping');
+  }
+});
+window.addEventListener('drop', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove('dropping');
+  addFiles([...e.dataTransfer.files]);
+});
+
 $('new-chat').onclick = () => newChat();
 $('send').onclick = () => (state.busy ? state.ctrl?.abort() : send());
 $('input').addEventListener('input', autosize);
@@ -1341,7 +2637,10 @@ $('input').addEventListener('keydown', (e) => {
   }
 });
 function setMode(mode) {
+  if (mic && mode !== 'transcribe') stopDictation(); // never leave the microphone on in the background
   state.mode = mode;
+  state.attach = []; // files and "editing" choices belong to the mode they were made in
+  state.base = null;
   for (const x of $('modes').children) x.classList.toggle('active', x.dataset.mode === mode);
   if (state.conv && state.conv.mode !== state.mode) state.conv = null; // each conversation belongs to one mode
   renderModels(); // each mode has its own remembered model
@@ -1371,6 +2670,8 @@ es.onmessage = async (e) => {
   const bar = (label, done, total) => `${esc(label)}<div class="bar"><div style="width:${total ? Math.min(100, (done / total) * 100) : 0}%"></div></div><small>${fmtSize(done)}${total ? ' / ' + fmtSize(total) : ''}</small>`;
   if (ev.type === 'transcribe-job' || ev.type === 'transcribe-segment') return onTranscribeEvent(ev);
   if (ev.type === 'image-job') return onImageEvent(ev);
+  if (ev.type === 'vector-job') return onVectorEvent(ev);
+  if (ev.type === 'threed-job') return onThreedEvent(ev);
   if (ev.type === 'api-tasks') {
     // prompts handed in from outside the window are running (count of them)
     state.apiTasks = ev.count;
@@ -1393,6 +2694,11 @@ es.onmessage = async (e) => {
     if (ev.done || ev.error) {
       state.engine = await api('/api/engine');
       renderEngine();
+      if (ev.feature) {
+        [state.image, state.vector, state.threed] = await Promise.all([api('/api/image'), api('/api/vector'), api('/api/3d')]);
+        if (SIMPLE_MODES.includes(state.mode)) renderMessages();
+        if ($('settings-dialog').open && settingsTab === 'engines') renderEngineTab();
+      }
     }
   } else if (ev.type === 'download-progress') {
     const d = $('download-box');
@@ -1430,7 +2736,7 @@ async function restoreSession() {
   let mode = 'chat';
   let projectId = null;
   let convId = null;
-  if (saved && ['chat', 'code', 'transcribe', 'image'].includes(saved.mode)) {
+  if (saved && ['chat', 'code', 'transcribe', 'image', 'vector', '3d'].includes(saved.mode)) {
     mode = saved.mode;
     projectId = state.projects.some((p) => p.id === saved.projectId) ? saved.projectId : null;
     convId = state.convs.some((c) => c.id === saved.convId) ? saved.convId : null;

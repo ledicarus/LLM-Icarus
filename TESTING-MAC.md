@@ -44,7 +44,10 @@ Mark each as works / broken / not tried, and write what happened.
 | 4b | The **+** next to "All projects" | Same folder window; the chosen folder becomes a project |
 | 4c | Right-click a project > **Browse** | Opens that folder in Finder |
 | 4d | Drag the right edge of the sidebar | The sidebar resizes (double-click the edge to reset) |
-| 5 | **Transcribe** mode: use "Upload a file" with a short voice recording (.m4a/.mp3/.wav) | Progress, then text and downloadable .srt/.txt. Note how long it took |
+| 5 | **Transcribe** mode: drag a short voice recording (.m4a/.mp3/.wav) onto the window (or click the paperclip), type "in English" and press Send | A chip shows the file, then progress, then text and downloadable .srt/.txt. Note how long it took |
+| 5a | **Transcribe** mode, the microphone button, then "Start listening": allow the microphone when the browser asks, say two sentences with a pause between | Each sentence appears about a second after you stop; "Stop" saves it in the list. If the browser blocks the microphone, note the message shown |
+| 5b | **Vector** mode: drag any photo or drawing onto the window and press Send | A drawing appears with Save SVG and Save EPS buttons. If the vector tools are missing, the screen offers to install them (about 40 MB) |
+| 5c | **3D** mode: install the 3D tools if asked (OpenSCAD 2021.01 is an Intel build; on Apple Silicon it needs Rosetta), then type "a cube with a round hole through it, 40 x 40 x 40 mm" and press Send | A solid appears; "View in 3D" opens a viewer you can turn. If OpenSCAD will not start, note the message |
 | 6 | **Image** mode (Apple Silicon only; needs the SDXL model, 7 GB, from the Models dialog or `Download components.command`) | A picture appears. Try 768x768 first. Note the time and any memory warnings |
 | 7 | **Code** mode | Needs the Claude Code CLI at `~/.local/bin/claude`; skip if you do not have it |
 | 8 | Close the window | The server stops (check: `curl http://127.0.0.1:3210/api/settings` should fail) |

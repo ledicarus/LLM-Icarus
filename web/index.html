@@ -30,6 +30,8 @@
         <button data-mode="code">Code</button>
         <button data-mode="transcribe">Transcribe</button>
         <button data-mode="image">Image</button>
+        <button data-mode="vector">Vector</button>
+        <button data-mode="3d">3D</button>
       </nav>
       <div class="spacer"></div>
       <span id="engine-pill" class="pill">Engine: checking…</span>
@@ -47,7 +49,11 @@
     <section id="placeholder" hidden></section>
 
     <footer>
+      <div id="attach-chips" hidden></div>
       <div id="composer">
+        <input id="attach-file" type="file" multiple hidden>
+        <button id="attach" class="ghost icon" type="button" title="Add files (or just drop them anywhere in this window)" aria-label="Add files" hidden>📎</button>
+        <button id="mic-open" class="ghost icon" type="button" title="Speak instead: opens the microphone screen" aria-label="Use the microphone" hidden>🎤</button>
         <textarea id="input" rows="1" placeholder="Message your local model…"></textarea>
         <button id="send" class="primary">Send</button>
       </div>
@@ -105,6 +111,21 @@
     <h3>Transcribe and Image engines</h3>
     <div id="component-box"></div>
   </section>
+</dialog>
+
+<dialog id="viewer-dialog">
+  <div class="dialog-head">
+    <h2 id="viewer-title">3D preview</h2>
+    <button id="viewer-close" class="ghost">Close</button>
+  </div>
+  <canvas id="viewer-canvas" width="760" height="520"></canvas>
+  <div class="row">
+    <small id="viewer-info" class="muted"></small>
+    <span class="spacer"></span>
+    <button id="viewer-reset" type="button">Reset view</button>
+    <a id="viewer-save" href="#"><button type="button" class="primary">Save STL</button></a>
+  </div>
+  <small class="muted">Drag to turn it, scroll to zoom. Z is up.</small>
 </dialog>
 
 <script src="/app.js" type="module"></script>

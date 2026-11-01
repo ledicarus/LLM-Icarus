@@ -12,6 +12,10 @@ import * as engine from './engine.js';
 import * as models from './models.js';
 import * as pyenv from './pyenv.js';
 import * as platform from './platform.js';
+import * as threed from './threed.js';
+import * as openscad from './openscad.js';
+
+const threedDone = () => openscad.installed() && threed.carveInstalled();
 
 export const STARTER_MODEL = 'https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf';
 export const SMALL_MODEL = 'https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf';
@@ -53,6 +57,8 @@ const steps = {
   engine: { title: 'Chat & Code engine (llama.cpp)', done: () => engine.status().installed, run: (arg) => engine.install(arg === true ? undefined : arg) },
   whisper: { title: 'Transcribe: Python + Whisper', done: () => pyenv.hasModule('faster_whisper'), run: () => pyenv.installFeature('whisper') },
   image: { title: 'Image generation: PyTorch + diffusers', done: () => pyenv.hasModule('torch') && pyenv.hasModule('diffusers'), run: () => pyenv.installFeature('image') },
+  vector: { title: 'Vector: tracing + EPS tools (~40 MB)', done: () => pyenv.hasModule('vtracer') && pyenv.hasModule('svglib'), run: () => pyenv.installFeature('vector') },
+  threed: { title: '3D: OpenSCAD + carving tools (~80 MB)', done: () => threedDone(), run: () => threed.installAll() },
   'whisper-model': { title: 'Whisper speech model (1.6-3 GB)', done: () => false, run: () => pyenv.fetchWhisperModel(platform.defaultWhisperModel()) },
   'starter-model': { title: 'Starter chat/code model: Qwen3-8B (~5 GB)', done: () => models.list().some((m) => /Qwen3-8B/i.test(m.name)), run: () => installModel(STARTER_MODEL, 'Qwen3-8B') },
   'starter-small': { title: 'Small starter model: Qwen3-4B (~2.5 GB, for Macs with 8 GB memory)', done: () => models.list().some((m) => /Qwen3-4B/i.test(m.name)), run: () => installModel(SMALL_MODEL, 'Qwen3-4B') },
@@ -101,7 +107,7 @@ async function interactive() {
 
 const argv = process.argv.slice(2);
 if (argv.length === 0 || argv.includes('--help')) {
-  console.log('Usage: node server/setup.js [--engine[=cuda|vulkan|cpu]] [--whisper] [--image] [--whisper-model] [--starter-model] [--starter-small] [--sdxl-model] [--model <link>] | --interactive');
+  console.log('Usage: node server/setup.js [--engine[=cuda|vulkan|cpu]] [--whisper] [--image] [--vector] [--threed] [--whisper-model] [--starter-model] [--starter-small] [--sdxl-model] [--model <link>] | --interactive');
   process.exit(0);
 }
 let failed = 0;
@@ -120,7 +126,7 @@ if (argv.includes('--interactive')) {
     else console.log(`Ignoring unknown option ${a}`);
   }
   // heavy-weight order: Python parts before their models
-  const order = ['engine', 'whisper', 'whisper-model', 'image', 'starter-model', 'starter-small', 'sdxl-model'];
+  const order = ['engine', 'whisper', 'whisper-model', 'image', 'vector', 'threed', 'starter-model', 'starter-small', 'sdxl-model'];
   wanted.sort((x, y) => (order.indexOf(x[0]) + 1 || 99) - (order.indexOf(y[0]) + 1 || 99));
   failed = await runSteps(wanted);
 }

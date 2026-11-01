@@ -6,6 +6,9 @@
 //   node icarus.mjs ask "prompt" [--model NAME_OR_ID] [--project NAME_OR_ID] [--mode chat|code] [--conversation ID] [--timeout MINUTES]
 // Set ICARUS_PORT if the app is not on the default port (3210).
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 const BASE = `http://127.0.0.1:${process.env.ICARUS_PORT || 3210}`;
 
 function fail(message, code = 1) {
@@ -82,6 +85,81 @@ if (command === 'status') {
   });
   console.log(out.reply);
   console.error(`(conversation ${out.conversationId})`);
+} else if (command === 'vector') {
+  const prompt = positional.join(' ').trim();
+  const method = flags.method || (flags.image && !prompt ? 'trace' : 'sdxl');
+  if (!['sdxl', 'llm', 'trace'].includes(method)) fail('--method must be sdxl, llm or trace');
+  if (method !== 'trace' && !prompt) fail('Describe the drawing: icarus.mjs vector "a fox head logo" [--method sdxl|llm] [--image reference.png] [--out folder]');
+  if (method === 'trace' && !flags.image) fail('Tracing needs --image <picture>');
+  const all = await call('/api/models');
+  const body = { method, prompt, wait: true };
+  if (flags.image) body.reference = path.resolve(flags.image);
+  if (method === 'sdxl') {
+    const images = all.filter((x) => x.kind === 'image' && x.exists !== false);
+    if (!images.length) fail('No image (SDXL) model is installed. Add one in LLM Icarus first.');
+    body.imageModelId = (flags.model ? pick(images, flags.model, 'image model') : images[0]).id;
+  } else if (method === 'llm') {
+    const chat = all.filter((x) => x.kind !== 'image' && x.exists !== false);
+    const loaded = (await call('/api/engine')).loaded?.modelId;
+    body.modelId = flags.model ? pick(chat, flags.model, 'model').id : loaded || chat[0]?.id;
+    if (flags.edit) body.baseJob = flags.edit;
+  }
+  if (flags.colors) body.colormode = flags.colors === 'bw' ? 'binary' : flags.colors;
+  if (flags.detail) body.detail = Number(flags.detail);
+  if (flags['width-mm']) body.widthMm = Number(flags['width-mm']);
+  const out = await call('/api/vector', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout((Number(flags.timeout) || 30) * 60000),
+  });
+  const dir = path.resolve(flags.out || '.');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const [ext, url] of [['svg', out.svg], ['eps', out.eps]]) {
+    const file = path.join(dir, `icarus-${out.id}.${ext}`);
+    fs.writeFileSync(file, Buffer.from(await (await fetch(BASE + url)).arrayBuffer()));
+    console.log(file);
+  }
+  console.error(`(drawing ${out.id}; pass --edit ${out.id} with --method llm to change it)`);
+} else if (command === '3d') {
+  const prompt = positional.join(' ').trim();
+  const photos = !!(flags.front || flags.side || flags.top);
+  if (!photos && !prompt && !flags.code) fail('Describe the part: icarus.mjs 3d "a pen holder" --size 80x60x100  (or give --front/--side/--top pictures, or --code file.scad)');
+  const body = { method: photos ? 'photos' : 'scad', prompt, wait: true };
+  if (flags.size) {
+    const [x, y, z] = String(flags.size).toLowerCase().split('x').map(Number);
+    body.sizeMm = { x: x || undefined, y: y || undefined, z: z || undefined };
+  }
+  if (flags.details) body.sizeText = flags.details;
+  if (photos) {
+    body.views = {};
+    for (const k of ['front', 'side', 'top']) if (flags[k]) body.views[k] = path.resolve(flags[k]);
+    if (flags.quality) body.quality = Number(flags.quality);
+  } else if (flags.code) {
+    body.code = fs.readFileSync(path.resolve(flags.code), 'utf8');
+  } else {
+    const chat = (await call('/api/models')).filter((x) => x.kind !== 'image' && x.exists !== false);
+    const loaded = (await call('/api/engine')).loaded?.modelId;
+    body.modelId = flags.model ? pick(chat, flags.model, 'model').id : loaded || chat[0]?.id;
+    body.thinking = flags.think !== 'off';
+    if (flags.edit) body.baseJob = flags.edit;
+  }
+  const out = await call('/api/3d', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout((Number(flags.timeout) || 30) * 60000),
+  });
+  const dir = path.resolve(flags.out || '.');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const [ext, url] of [['stl', out.stl], ['scad', out.scad]]) {
+    if (!url) continue;
+    const file = path.join(dir, `icarus-${out.id}.${ext}`);
+    fs.writeFileSync(file, Buffer.from(await (await fetch(BASE + url)).arrayBuffer()));
+    console.log(file);
+  }
+  console.error(`(solid ${out.id}; size ${JSON.stringify(out.size)} mm, ${out.triangles} triangles)`);
+  if (out.warning) console.error('WARNING: ' + out.warning);
 } else {
-  fail('Commands: status | models | projects | ask "prompt" [--model] [--project] [--mode chat|code] [--conversation] [--timeout MINUTES]');
+  fail('Commands: status | models | projects | ask "prompt" [...] | vector "description" [...] | 3d "description" [--size WxDxH] [--front f.png --side s.png --top t.png] [--out folder]');
 }

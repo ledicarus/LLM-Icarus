@@ -23,6 +23,14 @@ NVIDIA cuBLAS / cuDNN (pip wheels)   NVIDIA proprietary license       https://de
 PyTorch                              BSD-3-Clause                     https://pytorch.org
 diffusers, transformers, accelerate, safetensors     Apache-2.0       https://huggingface.co
 Pillow                               HPND license                     https://python-pillow.org
+vtracer (Vector mode, picture tracing)   MIT license                  https://github.com/visioncortex/vtracer
+svglib (Vector mode, SVG reading)    LGPL-3.0 (installed by pip, used as a library, not modified or bundled)   https://github.com/deeplook/svglib
+reportlab (Vector mode, EPS output)  BSD license                      https://www.reportlab.com
+lxml                                 BSD license                      https://lxml.de
+OpenSCAD (3D mode)                   GPL-2.0-or-later (a separate program, downloaded from files.openscad.org and run as is; LLM Icarus does not include or link to its code)   https://openscad.org
+numpy                                BSD license                      https://numpy.org
+PyMCubes                             BSD-3-Clause                     https://github.com/pmneila/PyMCubes
+fast-simplification                  MIT license                      https://github.com/pyvista/fast-simplification
 
 Models (downloaded on request; licenses are separate from this software)
 ------------------------------------------------------------------------

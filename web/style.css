@@ -123,6 +123,23 @@ header .spacer { flex: 1; }
 .im-grid img { width: 100%; border-radius: 8px; display: block; }
 .im-grid button { margin: 4px 4px 0 0; }
 .im-grid a { text-decoration: none; color: var(--text); }
+.mic-box { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 10px 0 16px; background: var(--panel); }
+.mic-meter { display: inline-block; width: 120px; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; vertical-align: middle; }
+#mic-level { display: block; height: 100%; width: 0; background: var(--accent); transition: width .05s linear; }
+.mic-text { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 10px 0 6px; min-height: 56px; max-height: 260px; overflow-y: auto; font-size: 15px; line-height: 1.55; white-space: pre-wrap; background: var(--bg); }
+.vc-result { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; margin: 8px 0; }
+/* a checkerboard behind the drawing shows which parts are transparent */
+.vc-preview { display: block; width: 240px; border-radius: 8px; border: 1px solid var(--line); overflow: hidden;
+  background: repeating-conic-gradient(#e8e8e8 0% 25%, #ffffff 0% 50%) 50% / 16px 16px; }
+.vc-preview img { width: 100%; display: block; }
+.td-thumb { width: 240px; height: 180px; border-radius: 8px; border: 1px solid var(--line); cursor: pointer;
+  background: radial-gradient(circle at 50% 35%, #2a3a52 0%, #151b26 100%); }
+#viewer-canvas { width: 100%; height: auto; display: block; border-radius: 10px; margin: 8px 0; touch-action: none; cursor: grab;
+  background: radial-gradient(circle at 50% 35%, #2a3a52 0%, #151b26 100%); }
+#viewer-dialog { width: min(820px, 96vw); }
+.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+.vc-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.vc-actions a { text-decoration: none; }
 .tr-wrap { max-width: 780px; margin: 0 auto; }
 .tr-job { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; background: var(--panel); }
 .tr-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
@@ -149,6 +166,18 @@ header .spacer { flex: 1; }
 footer { padding: 8px 16px 14px; }
 #composer { max-width: 780px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; border: 1px solid var(--line); border-radius: 14px; padding: 8px; background: var(--panel); }
 #input { flex: 1; border: none; background: transparent; resize: none; max-height: 220px; outline: none; }
+#attach-chips { max-width: 780px; margin: 0 auto 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 6px 3px 10px; font-size: 13px; background: var(--panel); }
+.chip img { width: 24px; height: 24px; object-fit: cover; border-radius: 6px; margin-left: -6px; }
+.chip-x { border: none; background: transparent; color: var(--muted); padding: 0 4px; cursor: pointer; }
+.chip-x:hover { color: var(--danger); }
+/* drop-a-file view: the newest result sits at the bottom, next to the box, like a chat */
+.tr-wrap.sv { display: flex; flex-direction: column; min-height: 100%; }
+.sv-head { display: flex; justify-content: space-between; align-items: center; }
+.sv-head h2 { margin: 0; }
+.sv-feed { display: flex; flex-direction: column-reverse; margin-top: auto; }
+.sv-back { align-self: flex-start; margin-bottom: 8px; }
+body.dropping main { outline: 3px dashed var(--accent); outline-offset: -8px; }
 #status-line { max-width: 780px; margin: 6px auto 0; font-size: 12px; color: var(--muted); min-height: 16px; }
 
 dialog { width: min(760px, 94vw); border: 1px solid var(--line); border-radius: 14px; background: var(--bg); color: var(--text); padding: 20px; }

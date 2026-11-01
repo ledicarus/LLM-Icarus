@@ -25,6 +25,28 @@ node icarus.mjs ask "task" --project NAME [--model NAME]      # Code mode: an ag
 node icarus.mjs ask "follow-up" --conversation ID             # continue an earlier chat (id is printed after each reply)
 ```
 
+### Vector drawings (SVG and EPS files)
+
+```
+node icarus.mjs vector "a fox head logo" --out ./art          # SDXL paints it, then it is traced (best quality)
+node icarus.mjs vector "a simple star icon" --method llm        # the chat model writes the shapes (crude for anything complex)
+node icarus.mjs vector --image photo.png --colors bw --detail 4 # trace a picture exactly (--colors color|bw)
+node icarus.mjs vector "make it blue" --method llm --edit DRAWING_ID
+```
+
+Saves `icarus-<id>.svg` and `icarus-<id>.eps` into `--out` (default: the current folder) and prints their paths. Add `--width-mm 120` to size the EPS. Needs the vector tools installed (the app offers a button) and, for `sdxl`, an SDXL model.
+
+### 3D solids (STL files)
+
+```
+node icarus.mjs 3d "a rectangular pen holder, open at the top" --size 80x60x100 --details "wall 3 mm" --out ./parts
+node icarus.mjs 3d --front front.png --side side.png --top top.png --size 40x40x60    # carve from outlines
+node icarus.mjs 3d --code part.scad                                                   # build your own OpenSCAD script
+node icarus.mjs 3d "make the walls thicker" --edit SOLID_ID                           # change an earlier design
+```
+
+`--size` is width x depth x height in mm (any part may be left out, as in `--size 40x0x60`). It saves `icarus-<id>.stl` (and the OpenSCAD script, `.scad`, for described parts) and prints the real size of the result, with a warning if the model ignored the sizes you gave. Pictures must be straight-on outlines on a plain background: front, the RIGHT side (front on the left), and the top (front edge at the bottom). Local models make simple parts well (boxes, brackets, holders, simple gears) and complicated ones badly, so check the printed size and have the user look at the result.
+
 `--model` and `--project` accept the id, the exact name, or a unique part of the name. Without `--model` the model that is already loaded is used, so nothing has to be swapped.
 
 ## How it behaves

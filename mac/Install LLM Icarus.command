@@ -75,7 +75,7 @@ yn() { # yn "question" default(Y|N)  -> returns 0 for yes
   [ "$ans" = "y" ] || [ "$ans" = "yes" ]
 }
 
-want_engine=0; want_whisper=0; want_whispermodel=0; want_image=0; want_starter=0; want_small=0; want_sdxl=0
+want_engine=0; want_whisper=0; want_whispermodel=0; want_image=0; want_vector=0; want_threed=0; want_starter=0; want_small=0; want_sdxl=0
 
 # recommended defaults depend on the Mac
 rec_image=0; [ "$MACHINE" = "arm64" ] && [ "$MEM_GB" -ge 16 ] && rec_image=1
@@ -84,13 +84,13 @@ if [ "$MEM_GB" -ge 16 ]; then rec_starter=1; else rec_small=1; fi
 
 case "$MODE" in
   yes)
-    want_engine=1; want_whisper=1; want_image=$rec_image; want_starter=$rec_starter; want_small=$rec_small ;;
+    want_engine=1; want_whisper=1; want_image=$rec_image; want_vector=1; want_threed=1; want_starter=$rec_starter; want_small=$rec_small ;;
   minimal) ;;
   parts)
     for p in $(printf '%s' "$PARTS" | tr ',' ' '); do
       case "$p" in
         engine) want_engine=1 ;; whisper) want_whisper=1 ;; whispermodel) want_whispermodel=1 ;;
-        image) want_image=1 ;; starter) want_starter=1 ;; starter-small) want_small=1 ;; sdxl) want_sdxl=1 ;;
+        image) want_image=1 ;; vector) want_vector=1 ;; threed) want_threed=1 ;; starter) want_starter=1 ;; starter-small) want_small=1 ;; sdxl) want_sdxl=1 ;;
         *) die "Unknown part: $p" ;;
       esac
     done ;;
@@ -109,6 +109,8 @@ case "$MODE" in
     else
       echo "  (Image generation needs an Apple Silicon Mac; skipped on this Intel Mac.)"
     fi
+    yn "Vector: tracing and EPS tools, about 40 MB?" Y && want_vector=1
+    yn "3D: OpenSCAD and carving tools for STL files, about 80 MB?" Y && want_threed=1
     if [ "$MEM_GB" -ge 16 ]; then
       yn "Starter chat/code model: Qwen3-8B, about 5 GB?" Y && want_starter=1
     else
@@ -123,6 +125,8 @@ SETUP_ARGS=""
 [ "$want_whisper" = 1 ] && SETUP_ARGS="$SETUP_ARGS --whisper"
 [ "$want_whispermodel" = 1 ] && SETUP_ARGS="$SETUP_ARGS --whisper-model"
 [ "$want_image" = 1 ] && SETUP_ARGS="$SETUP_ARGS --image"
+[ "$want_vector" = 1 ] && SETUP_ARGS="$SETUP_ARGS --vector"
+[ "$want_threed" = 1 ] && SETUP_ARGS="$SETUP_ARGS --threed"
 [ "$want_starter" = 1 ] && SETUP_ARGS="$SETUP_ARGS --starter-model"
 [ "$want_small" = 1 ] && SETUP_ARGS="$SETUP_ARGS --starter-small"
 [ "$want_sdxl" = 1 ] && SETUP_ARGS="$SETUP_ARGS --sdxl-model"

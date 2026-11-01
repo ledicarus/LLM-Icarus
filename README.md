@@ -5,8 +5,11 @@ Everything except the models themselves is included or downloaded for you.
 
 - **Chat** with local models, with saved conversations.
 - **Code**: an agent that reads and edits files in a project folder, using the Claude Code CLI pointed at your local model.
-- **Transcribe**: speech to text and captions with Whisper (faster-whisper).
+- **Transcribe**: speech to text and captions with Whisper (faster-whisper). Speak into your microphone and the text appears sentence by sentence (only the text is kept, never the sound), or transcribe an audio or video file.
 - **Image**: image generation with SDXL (diffusers; NVIDIA GPU on Windows, Apple Silicon on Mac).
+- **Vector**: SVG and EPS drawings for Illustrator, Inkscape, cutters and print shops. Describe a drawing and SDXL paints it and traces it (best quality), or the chat model writes the shapes (very simple icons only), or trace a picture you provide exactly.
+- **3D**: STL files for 3D printing and CAD. Describe a part with its sizes and the chat model designs it in OpenSCAD (you can edit the script), or carve a solid from front, side and top outlines at the real dimensions you give. A built-in viewer lets you turn the result around.
+- Transcribe, Image, Vector and 3D work like Chat: drop files into the window, type what you want, press Send. "Advanced options" opens the full settings for each.
 - Add models by link (Hugging Face or GitHub), file path, or import them from Ollama.
 - An HTTP API so other programs, including Claude Code, can hand it prompts: see [API.md](API.md).
 

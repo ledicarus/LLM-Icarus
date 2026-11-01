@@ -40,6 +40,8 @@ Name: "engine"; Description: "Chat and Code engine, llama.cpp (download about 0.
 Name: "whisper"; Description: "Transcribe: private Python + Whisper (download about 1.5 GB)"; Types: recommended; ExtraDiskSpaceRequired: 3000000000
 Name: "whispermodel"; Description: "Whisper large-v3 speech model now (about 3 GB; otherwise fetched on first use)"; Types: custom; ExtraDiskSpaceRequired: 3200000000
 Name: "image"; Description: "Image generation: PyTorch + diffusers, NVIDIA GPU only (download about 5 GB)"; Types: recommended; ExtraDiskSpaceRequired: 9000000000
+Name: "vector"; Description: "Vector: tracing and EPS tools (download about 40 MB)"; Types: recommended; ExtraDiskSpaceRequired: 150000000
+Name: "threed"; Description: "3D: OpenSCAD and carving tools for STL files (download about 80 MB)"; Types: recommended; ExtraDiskSpaceRequired: 300000000
 Name: "starter"; Description: "Starter chat/code model: Qwen3-8B (download about 5 GB)"; Types: recommended; ExtraDiskSpaceRequired: 5100000000
 Name: "sdxl"; Description: "SDXL base image model (download about 7 GB)"; Types: custom; ExtraDiskSpaceRequired: 7000000000
 
@@ -90,8 +92,10 @@ const
   IDX_WHISPER = 2;
   IDX_WHISPERMODEL = 3;
   IDX_IMAGE = 4;
-  IDX_STARTER = 5;
-  IDX_SDXL = 6;
+  IDX_VECTOR = 5;
+  IDX_THREED = 6;
+  IDX_STARTER = 7;
+  IDX_SDXL = 8;
 
 function HasNvidiaGpu: Boolean;
 begin
@@ -117,6 +121,8 @@ begin
   if WizardIsComponentSelected('whisper') then Result := Result + ' --whisper';
   if WizardIsComponentSelected('whispermodel') then Result := Result + ' --whisper-model';
   if WizardIsComponentSelected('image') then Result := Result + ' --image';
+  if WizardIsComponentSelected('vector') then Result := Result + ' --vector';
+  if WizardIsComponentSelected('threed') then Result := Result + ' --threed';
   if WizardIsComponentSelected('starter') then Result := Result + ' --starter-model';
   if WizardIsComponentSelected('sdxl') then Result := Result + ' --sdxl-model';
 end;

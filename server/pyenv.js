@@ -111,7 +111,7 @@ export async function ensurePython() {
 const pipInstall = (pkgs, { index } = {}, label) =>
   runPython(['-m', 'pip', 'install', '--no-warn-script-location', '--progress-bar', 'off', ...(index ? ['--index-url', index] : []), ...pkgs], { label });
 
-// feature: 'whisper' | 'image'
+// feature: 'whisper' | 'image' | 'vector' | 'carve'
 export async function installFeature(feature) {
   const gpu = platform.detectGpu();
   // check before downloading anything big
@@ -135,6 +135,14 @@ export async function installFeature(feature) {
     }
     status('Installing diffusers...');
     await pipInstall(['diffusers', 'transformers', 'accelerate', 'safetensors', 'pillow'], {}, 'diffusers');
+  } else if (feature === 'vector') {
+    // small, no GPU needed: vtracer turns pictures into SVG paths; svglib + reportlab write EPS
+    status('Installing the vector tools (vtracer, svglib, reportlab)...');
+    await pipInstall(['vtracer', 'svglib', 'reportlab', 'pillow'], {}, 'vector');
+  } else if (feature === 'carve') {
+    // 3D mode, "from pictures": numpy does the carving, PyMCubes turns it into a surface
+    status('Installing the 3D carving tools (numpy, PyMCubes)...');
+    await pipInstall(['numpy', 'pymcubes', 'fast-simplification', 'pillow'], {}, 'carve');
   } else throw new Error(`Unknown feature: ${feature}`);
 }
 
