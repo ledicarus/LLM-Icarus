@@ -1,0 +1,13 @@
+{
+  "name": "llm-icarus",
+  "version": "1.4.11-1-26",
+  "description": "LLM Icarus: local chat, code, transcription and image generation, powered by a bundled llama.cpp engine",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

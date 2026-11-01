@@ -1,0 +1,36 @@
+LLM Icarus - third-party software and models
+=============================================
+
+LLM Icarus runs entirely on your PC. It is built from, and downloads, the open-source
+components below. Each keeps its own license. This list is a summary; check each project
+for the full, current license text.
+
+Bundled with the installer
+--------------------------
+Node.js (runtime)                    MIT license                      https://nodejs.org
+Microsoft Edge WebView2 SDK          BSD-style license (see licenses\WebView2)   https://developer.microsoft.com/microsoft-edge/webview2
+  - shows the app window; uses the WebView2 Runtime that is part of Windows 10/11 and Edge.
+
+Downloaded during setup (not bundled)
+-------------------------------------
+llama.cpp (chat/code engine)         MIT license                      https://github.com/ggml-org/llama.cpp
+  - CUDA build also contains NVIDIA CUDA runtime libraries, redistributed under the
+    NVIDIA CUDA Toolkit license terms for redistributable files.
+Python (embeddable package)          Python Software Foundation License   https://www.python.org
+faster-whisper / CTranslate2         MIT license                      https://github.com/SYSTRAN/faster-whisper
+PyAV, ONNX Runtime, tokenizers       BSD / MIT style licenses         (installed as dependencies by pip)
+NVIDIA cuBLAS / cuDNN (pip wheels)   NVIDIA proprietary license       https://developer.nvidia.com
+PyTorch                              BSD-3-Clause                     https://pytorch.org
+diffusers, transformers, accelerate, safetensors     Apache-2.0       https://huggingface.co
+Pillow                               HPND license                     https://python-pillow.org
+
+Models (downloaded on request; licenses are separate from this software)
+------------------------------------------------------------------------
+Qwen3-8B (starter chat/code model)   Apache-2.0 (per the model card)  https://huggingface.co/Qwen
+Whisper large-v3 (speech to text)    MIT (per the model card)         https://huggingface.co/openai/whisper-large-v3
+Stable Diffusion XL base 1.0         CreativeML OpenRAIL++-M          https://huggingface.co/stabilityai
+                                     (also used to generate the engraving in this app's logo)
+Any other model you add              See that model's own license page. Some models (for example
+                                     Gemma) use custom terms or have commercial-use limits.
+
+No warranty. Model output can be wrong or inappropriate; you are responsible for how you use it.

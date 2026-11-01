@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM Icarus</title>
+<link rel="icon" href="/logo.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="brand"><img id="brand-logo" src="/logo.png" alt=""><span>LLM Icarus</span><button id="close-sidebar" class="ghost icon" title="Hide the sidebar" aria-label="Hide the sidebar">«</button></div>
+    <button id="new-chat" class="primary">+ New chat</button>
+    <div class="sb-title">Projects</div>
+    <div id="project-list"></div>
+    <div class="sb-title">Chats <span id="chat-scope"></span></div>
+    <div id="chat-list"></div>
+    <div class="sidebar-foot">
+      <button id="open-settings" class="ghost">⚙ Settings</button>
+    </div>
+  </aside>
+  <div id="sb-resizer" role="separator" aria-orientation="vertical" title="Drag to resize the sidebar (double-click to reset)"></div>
+
+  <main>
+    <header>
+      <button id="toggle-sidebar" class="ghost icon" title="Show or hide the sidebar" aria-label="Show or hide the sidebar">☰</button>
+      <nav id="modes">
+        <button data-mode="chat" class="active">Chat</button>
+        <button data-mode="code">Code</button>
+        <button data-mode="transcribe">Transcribe</button>
+        <button data-mode="image">Image</button>
+      </nav>
+      <div class="spacer"></div>
+      <span id="engine-pill" class="pill">Engine: checking…</span>
+      <select id="model-select" title="Model"></select>
+    </header>
+
+    <div id="code-bar" hidden>
+      <span id="code-project" class="pill"></span>
+      <span id="code-warn" class="warn" hidden></span>
+      <label title="Lets the agent run Bash/PowerShell commands without asking"><input type="checkbox" id="code-shell"> Allow shell commands</label>
+    </div>
+
+    <section id="messages"></section>
+
+    <section id="placeholder" hidden></section>
+
+    <footer>
+      <div id="composer">
+        <textarea id="input" rows="1" placeholder="Message your local model…"></textarea>
+        <button id="send" class="primary">Send</button>
+      </div>
+      <div id="status-line"></div>
+    </footer>
+  </main>
+</div>
+
+<!--
+  Settings. To add a page: put a <section id="tab-NAME" class="tab-panel" hidden> here and add an entry
+  { id: 'NAME', title: '...', show: fn } to SETTINGS_TABS in app.js.
+-->
+<dialog id="settings-dialog">
+  <div class="dialog-head">
+    <h2>Settings</h2>
+    <button id="close-settings" class="ghost">Close</button>
+  </div>
+  <nav id="settings-tabs" role="tablist"></nav>
+
+  <section id="tab-folders" class="tab-panel" hidden>
+    <p class="muted">LLM Icarus looks inside these folders and lists every subfolder it finds as a project. To add one project folder by itself, use the <b>+</b> next to <i>All projects</i> in the sidebar.</p>
+    <div class="row">
+      <input id="root-path" placeholder="Folder to search, for example C:\Users\YourName\Projects">
+      <button id="root-browse">Browse…</button>
+      <button id="root-add" class="primary">Add</button>
+    </div>
+    <div id="root-msg" class="muted msg-line"></div>
+    <div id="root-list"></div>
+    <div class="row"><button id="root-rescan">Look for new projects now</button></div>
+  </section>
+
+  <section id="tab-models" class="tab-panel" hidden>
+    <div class="row"><button id="models-check">Check for updates</button><small id="models-check-msg" class="muted msg-line"></small></div>
+    <h3>Your models</h3>
+    <div id="model-list"></div>
+
+    <h3>Add a model</h3>
+    <div class="row">
+      <input id="hf-url" placeholder="Link to a .gguf (Hugging Face or GitHub), a GitHub repo/release, or org/repo/file.gguf">
+      <button id="hf-go">Download</button>
+    </div>
+    <div class="row">
+      <input id="path-url" placeholder="Path to a .gguf or .safetensors file already on this PC">
+      <button id="path-go">Add</button>
+    </div>
+    <div id="ollama-box"></div>
+    <div id="download-box"></div>
+  </section>
+
+  <section id="tab-engines" class="tab-panel" hidden>
+    <div class="row"><button id="engines-check">Check for updates</button><small id="engines-check-msg" class="muted msg-line"></small></div>
+    <div id="engine-updates"></div>
+    <h3>Chat and Code engine</h3>
+    <div id="engine-box"></div>
+    <h3>Transcribe and Image engines</h3>
+    <div id="component-box"></div>
+  </section>
+</dialog>
+
+<script src="/app.js" type="module"></script>
+</body>
+</html>

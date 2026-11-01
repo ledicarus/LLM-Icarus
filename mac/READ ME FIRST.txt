@@ -1,0 +1,50 @@
+LLM Icarus for macOS
+====================
+
+LLM Icarus runs AI models on your own Mac: chat, a coding agent, speech-to-text and image
+generation. Nothing is sent to anyone; it all runs on this computer.
+
+HOW TO INSTALL
+--------------
+1. Unzip this download (double-click the zip).
+2. Open the "Install LLM Icarus.command" file.
+
+   macOS may say it "cannot be opened because it is from an unidentified developer", because
+   the installer is not signed with a paid Apple developer certificate. To open it anyway:
+     - Right-click (or Control-click) the file, choose Open, then click Open in the dialog.
+   Or, in Terminal:   bash "Install LLM Icarus.command"
+
+3. Answer the questions (press Enter to accept the suggestion) and wait for the downloads.
+   - You need an internet connection. Models are large (2.5 GB to 5 GB).
+   - Nothing needs an administrator password; everything goes in your home folder.
+4. Open "LLM Icarus" from the Applications folder in your home folder
+   (~/Applications). Drag it to the Dock if you like.
+
+WHICH MAC?
+----------
+- Apple Silicon (M1 or newer) is recommended: chat and code use the Apple GPU.
+- 16 GB of memory or more is best. With 8 GB the installer suggests a smaller model.
+- Image generation needs Apple Silicon and works best with 16 GB or more.
+- Intel Macs can chat and transcribe, but slowly, and cannot generate images.
+
+USING IT FROM CLAUDE CODE (OPTIONAL)
+------------------------------------
+While LLM Icarus is open, other programs on this Mac can hand it prompts at
+http://127.0.0.1:3210 (this Mac only). If you use Claude Code, this makes it know how:
+
+  mkdir -p ~/.claude/skills
+  cp -R "$HOME/Library/Application Support/LLM Icarus/app/claude-skill" ~/.claude/skills/llm-icarus
+
+Then ask Claude Code to "send this to Icarus". Delete ~/.claude/skills/llm-icarus to undo.
+
+IF SOMETHING GOES WRONG
+-----------------------
+- Logs are in:  ~/Library/Application Support/LLM Icarus/data/
+    server.log                (the app)
+    engine/llama-server.log   (the chat engine)
+- To retry downloads:  open "Download components.command" in
+  ~/Library/Application Support/LLM Icarus
+- To remove everything: open "Uninstall LLM Icarus.command" in the same folder.
+
+For the person testing this build: see TESTING-MAC.md in this folder for the checklist and what
+to send back.

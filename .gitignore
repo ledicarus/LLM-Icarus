@@ -1,0 +1,10 @@
+data/
+HANDOFF.md
+node_modules/
+*.log
+dist/
+installer/runtime/
+installer/*.bmp
+installer/icarus.ico
+installer/out/
+installer/webview2/
