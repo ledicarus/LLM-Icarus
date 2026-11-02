@@ -73,12 +73,14 @@ The vector tools are a small download (about 40 MB): install them from the Vecto
 ## 3D solids (STL)
 
 `POST /api/3d` makes an STL file. Add `"wait": true` to hold the request until it is finished; the reply is
-`{ "id", "status", "stl", "scad", "size": [x, y, z], "triangles", "warning" }`, where `stl` and `scad` are download paths
+`{ "id", "status", "stl", "scad", "picture", "size": [x, y, z], "triangles", "warning" }`, where `stl`, `scad` and `picture` are download paths
 (for example `/api/3d/<id>/out.stl`) and `size` is the real size of the result in millimetres. `GET /api/3d` lists the jobs.
 
 | Field | Meaning |
 | --- | --- |
-| `method` | `"scad"`: the chat model designs the part as an OpenSCAD script from `prompt`; or `"photos"`: carve a solid from outlines in `views`. |
+| `method` | `"scad"`: the chat model designs the part as an OpenSCAD script from `prompt`; `"photos"`: carve a solid from outlines in `views`; or `"sweep"`: for a long rounded thing (a banana, a carrot, a bone) named in `prompt`, the image model draws a side picture of it and a round solid is swept along that picture's outline. |
+| `imageModelId` | For `sweep`: the SDXL model that draws the picture (the first image model if left out). |
+| `sizeMm` (with `sweep`) | The object's length in mm, measured along its body (following its curve) from one end to the other; the largest of `x`, `y`, `z` is used. If none is given, `modelId` (a chat model) is asked how big one usually is. |
 | `prompt`, `sizeMm`, `sizeText` | For `scad`: what to make, the overall size `{ "x": width, "y": depth, "z": height }` in mm, and other measurements as text ("wall 3 mm, hole 8 mm"). |
 | `modelId`, `thinking` | The chat model and whether it should think first (slower, better). |
 | `baseJob` | With `scad`: the id of an earlier design to change; `prompt` then says what to change. |
@@ -86,7 +88,11 @@ The vector tools are a small download (about 40 MB): install them from the Vecto
 | `views` | For `photos`: `{ "front": path, "side": path, "top": path }` to straight-on outlines on a plain background. `side` is the RIGHT side (front on the left); `top` has the front edge at the bottom. At least one picture; `sizeMm` gives the real size, and any size it leaves out is worked out from the outlines. |
 | `quality` | For `photos`: 1 draft, 2 normal, 3 fine. |
 
-The 3D tools (OpenSCAD and the carving tools, about 80 MB) install from the 3D screen or Settings > Engines.
+The 3D tools (OpenSCAD and the carving tools, about 80 MB) install from the 3D screen or Settings > Engines. `sweep` needs only the image tools and an image model. It draws a few pictures, keeps the cleanest single object (and saves it as `picture`), and the result is round in cross-section, so it suits long, bent or straight shapes and not flat or branching ones. It takes a few minutes on a modest graphics card.
+
+## The app's own version and updates
+
+`GET /api/version` returns `{ "version", "canSelfUpdate" }`. `POST /api/app-update/check` (add `{ "auto": true }` to respect the "check at startup" setting) asks GitHub for the newest release and returns `{ current, latest, newer, notes, page, asset, canSelfUpdate }`. `POST /api/app-update/download` starts downloading the installer (installed Windows copies only; progress arrives as `app-update` events on `/api/events` and in `GET /api/app-update`), and `POST /api/app-update/cancel` stops it. Installing is done by the app window, not the API: it runs the downloaded installer when the user presses OK.
 
 ## Using it from Claude Code
 

@@ -15,6 +15,7 @@ import * as dictate from './dictate.js';
 import * as openscad from './openscad.js';
 import * as platform from './platform.js';
 import * as pyenv from './pyenv.js';
+import * as appupdate from './appupdate.js';
 import { pipeline } from 'node:stream/promises';
 
 let apiTasks = 0; // prompts from /api/tasks currently running (drives the animated logo)
@@ -81,6 +82,28 @@ async function route(req, res, url) {
     json(res, 200, { ok: true });
     engine.stop().finally(() => setTimeout(() => process.exit(0), 200));
     return;
+  }
+
+  // --- this app: its version, and updating it from the newest GitHub release ---
+  if (pathname === '/api/version' && m === 'GET') return json(res, 200, { version: appupdate.version(), canSelfUpdate: appupdate.canSelfUpdate() });
+  if (pathname === '/api/app-update' && m === 'GET') return json(res, 200, appupdate.status());
+  if (pathname === '/api/app-update/check' && m === 'POST') {
+    const { auto } = await readBody(req);
+    if (auto && store.settings().checkAppUpdates === false) return json(res, 200, { disabled: true });
+    return json(res, 200, await appupdate.check({ force: !auto }));
+  }
+  if (pathname === '/api/app-update/download' && m === 'POST') {
+    try {
+      return json(res, 202, await appupdate.download());
+    } catch (e) {
+      return json(res, 400, { error: e.message });
+    }
+  }
+  if (pathname === '/api/app-update/cancel' && m === 'POST') return json(res, 200, appupdate.cancel());
+  // asked by the app window (not the page) before it runs an installer: the path of the finished download, or nothing
+  if (pathname === '/api/app-update/installer-path' && m === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end(appupdate.readyInstaller() || '');
   }
 
   // --- engine ---
@@ -374,7 +397,7 @@ async function route(req, res, url) {
     if (!body.wait) return json(res, 202, { id: job.id });
     await job.finished;
     const base = `/api/3d/${job.id}`;
-    return json(res, job.status === 'done' ? 200 : 500, { id: job.id, status: job.status, error: job.error, stl: job.files.stl ? `${base}/out.stl` : undefined, scad: job.files.scad ? `${base}/model.scad` : undefined, size: job.size, triangles: job.triangles, warning: job.warning });
+    return json(res, job.status === 'done' ? 200 : 500, { id: job.id, status: job.status, error: job.error, stl: job.files.stl ? `${base}/out.stl` : undefined, scad: job.files.scad ? `${base}/model.scad` : undefined, picture: job.files.picture ? `${base}/picture.png` : undefined, size: job.size, triangles: job.triangles, warning: job.warning });
   }
   if ((match = pathname.match(/^\/api\/3d\/([\w-]+)\/cancel$/)) && m === 'POST') return json(res, 200, { ok: threed.cancel(match[1]) });
   if ((match = pathname.match(/^\/api\/3d\/([\w-]+)$/)) && m === 'DELETE') return json(res, 200, { removed: threed.remove(match[1]) });
@@ -384,7 +407,7 @@ async function route(req, res, url) {
     const ext = path.extname(f);
     const dl = url.searchParams.get('download') === '1';
     res.writeHead(200, {
-      'Content-Type': ext === '.stl' ? 'model/stl' : 'text/plain; charset=utf-8',
+      'Content-Type': ext === '.stl' ? 'model/stl' : ext === '.png' ? 'image/png' : 'text/plain; charset=utf-8',
       'X-Content-Type-Options': 'nosniff',
       ...(dl && { 'Content-Disposition': `attachment; filename="icarus-${match[1]}${ext}"` }),
     });

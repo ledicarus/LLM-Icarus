@@ -9,6 +9,7 @@ import * as pyenv from './pyenv.js';
 import * as platform from './platform.js';
 import * as store from './store.js';
 import * as image from './image.js';
+import * as llm from './llm.js';
 import { emit } from './events.js';
 
 // Vector mode: makes SVG and EPS files, one job at a time. Three ways in:
@@ -233,16 +234,8 @@ async function askModel(job, messages) {
   await engine.load(model, { ctx: Math.max(ctx, s.thinking ? 16384 : 8192), kvQuant, reasoning: s.thinking ? 'on' : 'off' });
   if (job.status === 'cancelled') return '';
   setStage(job, 'running', 'drawing');
-  const res = await fetch(`${engine.baseUrl()}/v1/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, temperature: 0.5, max_tokens: s.thinking ? 12000 : 6000, stream: false }),
-    signal: job.abort.signal,
-  });
-  if (!res.ok) throw new Error(`Engine error ${res.status}: ${await res.text()}`);
-  const choice = (await res.json()).choices?.[0];
-  const text = choice?.message?.content || '';
-  if (!text.trim() && choice?.finish_reason === 'length') {
+  const { text, finish } = await llm.complete(messages, { temperature: 0.5, maxTokens: s.thinking ? 12000 : 6000, signal: job.abort.signal });
+  if (!text.trim() && finish === 'length') {
     throw new Error('The model ran out of room while thinking, before it drew anything. Turn off "Think longer", or ask for something simpler.');
   }
   return text;

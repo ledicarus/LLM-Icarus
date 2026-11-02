@@ -70,6 +70,19 @@ function tdViewsFrom(images) {
   return views;
 }
 
+// Long rounded things (a banana, a carrot, a bone) are not drawn well by a model writing CAD code, so with no pictures dropped
+// they are made from a picture the image model draws of the object (the "sweep" method). Mechanical parts and edits go to OpenSCAD.
+const MECHANICAL = /\b(bracket|holder|box|case|cover|mount|adapter|gear|bolt|screw|nut|holes?|thread(?:ed)?|walls?|hinge|clip|stand|tray|cup|plate|enclosure|lid|handle|knob|spacer|washer|tube|pipe|hook|stl script|openscad|script)\b/i;
+const LONG_ROUND = /\b(banana|carrot|cucumber|zucchini|courgette|sausage|hot ?dog|baguette|bone|horn|tusk|eggplant|aubergine|pickle|chil+i|parsnip|radish|leek|snake|worm|caterpillar|sweet potato|cigar|pea ?pod|green bean)s?\b/i;
+const FROM_PICTURE = /\bfrom a (?:generated )?(?:picture|photo)\b/i;
+
+export function wantsSweep(text, ctx = {}) {
+  if (ctx.base || !ctx.imageModelId || !ctx.sdxlReady) return false;
+  if (/\b(openscad|script|with the model)\b/i.test(text)) return false;
+  if (FROM_PICTURE.test(text) && !/\b(bracket|box|case|mount|gear|hinge|clip|tray|lid)\b/i.test(text)) return true;
+  return LONG_ROUND.test(text) && !MECHANICAL.test(text);
+}
+
 // ctx: { llmId, imageModelId, sdxlReady, base }  (base = the earlier result this message should edit, if any)
 export function planJob(mode, text, files, ctx = {}) {
   text = (text || '').trim();
@@ -124,6 +137,7 @@ export function planJob(mode, text, files, ctx = {}) {
       return { requests: [{ url: '/api/3d', body: { method: 'photos', sizeMm, views, quality, background } }] };
     }
     if (!text) return { error: 'Describe the part (with its sizes), or drop front, side and top pictures of it.' };
+    if (wantsSweep(text, ctx)) return { requests: [{ url: '/api/3d', body: { method: 'sweep', prompt: text, sizeMm, imageModelId: ctx.imageModelId, modelId: ctx.llmId } }] };
     if (!ctx.llmId) return { error: 'Add a chat model first (Settings > Models).' };
     return { requests: [{ url: '/api/3d', body: { method: 'scad', prompt: text, sizeMm, modelId: ctx.llmId, thinking: true, baseJob: ctx.base || undefined } }] };
   }

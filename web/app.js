@@ -615,7 +615,7 @@ const SIMPLE_HINTS = {
   transcribe: { title: 'Transcribe', list: 'tr-list', msg: 'tr-msg', placeholder: 'Drop audio or video files here and press Send (add a language if you like: "in Spanish")', text: 'Drop in audio or video files to get the text and captions back. Or click the microphone to speak.' },
   image: { title: 'Image', list: 'im-list', msg: 'im-msg', placeholder: 'Describe a picture. Drop a picture here to change it instead.', text: 'Describe a picture, or drop one in and say what to change. You can add a size ("portrait", "1216x832") and "4 images".' },
   vector: { title: 'Vector', list: 'vc-list', msg: 'vc-msg', placeholder: 'Describe a drawing, or drop a picture to trace it', text: 'Describe a drawing and SDXL paints it and traces it, or drop a picture to trace it exactly. Add "black and white", "80 mm wide" or "remove the background" if you want them. You get SVG and EPS files.' },
-  '3d': { title: '3D', list: 'td-list', msg: 'td-msg', placeholder: 'Describe a part with its sizes (40 x 20 x 10 mm), or drop front, side and top pictures', text: 'Describe a part with its sizes and the chat model designs it. Or drop pictures of an object (name them front, side and top, or drop them in that order) with its real size, for example "80 mm tall", and a solid is carved from them. You get an STL file.' },
+  '3d': { title: '3D', list: 'td-list', msg: 'td-msg', placeholder: 'Describe a part with its sizes (40 x 20 x 10 mm), or drop front, side and top pictures', text: 'Describe a part with its sizes and the chat model designs it. Or drop pictures of an object (name them front, side and top, or drop them in that order) with its real size, for example "80 mm tall", and a solid is carved from them. For a long rounded thing such as a banana, a carrot or a bone, just name it ("a banana", or "a carrot 180 mm long"): the image model draws it and a solid is built from the picture, at a size the chat model knows if you give none. You get an STL file.' },
 };
 const SIMPLE_MODES = Object.keys(SIMPLE_HINTS);
 
@@ -1830,16 +1830,17 @@ function renderThreeD(ph) {
         <div class="row"><label class="muted">How <select id="td-method">
           <option value="scad">Describe it: the chat model designs it (OpenSCAD), at the sizes you give</option>
           <option value="photos">From pictures: carve a solid from front, side and top outlines</option>
+          <option value="sweep">A long rounded thing (banana, carrot, bone): the image model draws it and a solid is built from the picture</option>
         </select></label></div>
         <div id="td-scad">
           <textarea id="td-prompt" rows="3" class="wide" placeholder="Describe the part… for example: a rectangular pen holder with a flat base and four walls"></textarea>
           <div id="td-base" class="muted"></div>
           <div class="row">
             <label class="muted">Model <select id="td-model"></select></label>
-            <label class="muted" title="The model reasons before it designs: slower, but the designs are noticeably better"><input type="checkbox" id="td-think" checked> Think longer</label>
+            <label class="muted td-scad-only" title="The model reasons before it designs: slower, but the designs are noticeably better"><input type="checkbox" id="td-think" checked> Think longer</label>
           </div>
-          <textarea id="td-sizetext" rows="2" class="wide" placeholder="Other measurements, for example: wall 3 mm, hole diameter 8 mm, handle 120 mm long"></textarea>
-          <details><summary class="muted">Write the OpenSCAD yourself instead</summary>
+          <textarea id="td-sizetext" rows="2" class="wide td-scad-only" placeholder="Other measurements, for example: wall 3 mm, hole diameter 8 mm, handle 120 mm long"></textarea>
+          <details class="td-scad-only"><summary class="muted">Write the OpenSCAD yourself instead</summary>
             <textarea id="td-code" rows="9" class="wide mono" spellcheck="false" placeholder="cube([20, 20, 5]);"></textarea>
             <small class="muted">If this box has code, it is built as it is and the description is ignored. "Open the script" on a result fills it in so you can adjust it.</small>
           </details>
@@ -1950,8 +1951,9 @@ function renderThreeDSetup() {
 
 function updateThreeDForm() {
   const method = $('td-method').value;
-  $('td-scad').hidden = method !== 'scad';
+  $('td-scad').hidden = method === 'photos';
   $('td-photos').hidden = method !== 'photos';
+  document.querySelectorAll('.td-scad-only').forEach((el) => (el.hidden = method === 'sweep'));
   $('td-base').textContent = '';
   if (method === 'scad' && tdBase) {
     $('td-base').innerHTML = `Editing design ${esc(tdBase)}. <button id="td-unbase" type="button">Start a new design instead</button>`;
@@ -1960,9 +1962,10 @@ function updateThreeDForm() {
       updateThreeDForm();
     };
   }
-  $('td-prompt').placeholder = method === 'scad' && tdBase ? 'What should change? For example: make the walls thicker and add a hole in the base' : 'Describe the part… for example: a rectangular pen holder with a flat base and four walls';
+  $('td-prompt').placeholder = method === 'sweep' ? 'Name the object, for example: a banana. Add its length (190 mm long) or leave it out and the chat model says how big one usually is' : method === 'scad' && tdBase ? 'What should change? For example: make the walls thicker and add a hole in the base' : 'Describe the part… for example: a rectangular pen holder with a flat base and four walls';
   const hints = [];
   if (!state.models.some((m) => m.kind !== 'image') && method === 'scad') hints.push('Add a chat model first (Settings > Models).');
+  if (method === 'sweep' && !(state.image?.installed && state.models.some((m) => m.kind === 'image'))) hints.push('This needs the image tools and an image model (the Image screen sets them up).');
   $('td-msg').textContent = hints.join(' ');
 }
 
@@ -1975,7 +1978,9 @@ async function createThreeD() {
     const body = {
       method,
       sizeMm: { x: size('td-x'), y: size('td-y'), z: size('td-z') },
-      ...(method === 'scad'
+      ...(method === 'sweep'
+        ? { prompt: $('td-prompt').value, modelId: $('td-model').value, imageModelId: state.models.find((m) => m.kind === 'image')?.id }
+        : method === 'scad'
         ? { prompt: $('td-prompt').value, sizeText: $('td-sizetext').value, modelId: $('td-model').value, thinking: $('td-think').checked, baseJob: tdBase || undefined, code: $('td-code').value.trim() || undefined }
         : { views: Object.fromEntries(Object.entries(tdViews).map(([k, v]) => [k, v.path])), quality: +$('td-quality').value, background: $('td-bg').value }),
     };
@@ -1993,13 +1998,14 @@ function renderThreeDList() {
   if (!box) return;
   box.innerHTML = '';
   const stages = { loading: 'Loading the model…', designing: 'Designing…', 'building the solid': 'Building the solid…', carving: 'Carving…', 'reading the pictures': 'Reading the pictures…', 'building the surface': 'Building the surface…' };
-  const how = { scad: 'designed by the chat model (OpenSCAD)', photos: 'carved from pictures' };
+  const how = { scad: 'designed by the chat model (OpenSCAD)', photos: 'carved from pictures', sweep: 'built from a picture the image model drew' };
+  const stageText = (s) => stages[s] || (s ? s[0].toUpperCase() + s.slice(1) + '…' : '');
   for (const j of state.threed?.jobs || []) {
     const el = document.createElement('div');
     el.className = 'tr-job';
     const active = ['queued', 'loading', 'running'].includes(j.status);
-    const title = j.method === 'photos' ? `Carved from ${(j.views || []).join(', ')} picture${(j.views || []).length === 1 ? '' : 's'}` : j.manual ? 'Your OpenSCAD script' : j.prompt || 'Design';
-    el.innerHTML = `<div class="tr-head"><span>${esc(title)}${j.refine ? ' <small class="muted">(edit)</small>' : ''}</span><span class="pill ${j.status === 'done' ? 'ok' : j.status === 'error' ? 'bad' : ''}">${esc(active ? stages[j.stage] || j.status : j.status)}</span></div>
+    const title = j.method === 'photos' ? `Carved from ${(j.views || []).join(', ')} picture${(j.views || []).length === 1 ? '' : 's'}` : j.method === 'sweep' ? j.object || j.prompt || 'Shape' : j.manual ? 'Your OpenSCAD script' : j.prompt || 'Design';
+    el.innerHTML = `<div class="tr-head"><span>${esc(title)}${j.refine ? ' <small class="muted">(edit)</small>' : ''}</span><span class="pill ${j.status === 'done' ? 'ok' : j.status === 'error' ? 'bad' : ''}">${esc(active ? stageText(j.stage) || j.status : j.status)}</span></div>
       <small class="muted">${esc(how[j.method] || '')}${j.modelName ? ' · ' + esc(j.modelName) : ''}${j.size ? ' · ' + esc(fmtSize3d(j.size)) : ''}${j.triangles ? ' · ' + j.triangles.toLocaleString() + ' triangles' : ''}</small>`;
     if (j.note) el.insertAdjacentHTML('beforeend', `<div class="muted">${esc(j.note)}</div>`);
     if (j.warning) el.insertAdjacentHTML('beforeend', `<div class="warn">${esc(j.warning)}</div>`);
@@ -2021,6 +2027,14 @@ function renderThreeDList() {
       thumb.title = 'Click to open the 3D view';
       thumb.onclick = () => openViewer(j);
       row.append(thumb);
+      if (j.files.picture) {
+        const pic = document.createElement('img');
+        pic.src = `/api/3d/${j.id}/picture.png`;
+        pic.className = 'td-thumb';
+        pic.title = 'The picture the shape was taken from';
+        pic.style.objectFit = 'cover';
+        row.append(pic);
+      }
       loadMesh(j.id).then((mesh) => drawMesh(thumb, mesh, THUMB_VIEW)).catch(() => {});
       const side = document.createElement('div');
       side.className = 'vc-actions';
@@ -2037,6 +2051,18 @@ function renderThreeDList() {
         return a;
       };
       side.append(btn('View in 3D', () => openViewer(j)), link('Save STL', `/api/3d/${j.id}/out.stl?download=1`));
+      if (j.method === 'sweep') {
+        // the picture is a roll of the dice: draw a new one at the same size
+        side.append(btn('Try another picture', async () => {
+          try {
+            await api('/api/3d', { method: 'POST', body: { method: 'sweep', prompt: j.prompt, sizeMm: { y: j.lengthUsed }, imageModelId: state.models.find((m) => m.kind === 'image')?.id } });
+            state.threed = await api('/api/3d');
+            renderThreeDList();
+          } catch (e) {
+            $('td-msg').textContent = e.message;
+          }
+        }));
+      }
       if (j.warning && j.files.scad && j.sizeAsked) {
         // the design missed the size you asked for: wrap the same script in OpenSCAD's resize() so it hits it exactly
         side.append(
@@ -2121,6 +2147,7 @@ const SETTINGS_TABS = [
   { id: 'folders', title: 'Project folders', show: renderFolderTab },
   { id: 'models', title: 'Models', show: refreshModelDialog },
   { id: 'engines', title: 'Engines', show: renderEngineTab },
+  { id: 'app', title: 'App', show: renderAppTab },
 ];
 let settingsTab = 'folders';
 
@@ -2663,10 +2690,161 @@ $('code-shell').onchange = async (e) => {
   state.settings = await api('/api/settings', { method: 'POST', body: { codeAllowShell: e.target.checked } });
 };
 
+// ---- this app's version, and updating it ----------------------------------------
+// Only the Windows app window (WebView2) can restart itself to run an installer; anywhere else the dialog just points to
+// the release page.
+
+const inAppWindow = !!window.chrome?.webview;
+let upOffer = null; // the release being offered
+
+async function showVersion() {
+  try {
+    state.version = await api('/api/version');
+    $('app-version').textContent = `Version ${state.version.version}`;
+  } catch {
+    /* the label is a nicety */
+  }
+}
+
+function upShow({ title, body, buttons, progress }) {
+  $('up-title').textContent = title;
+  $('up-body').innerHTML = body;
+  const bar = $('up-bar');
+  bar.hidden = progress === undefined;
+  if (progress !== undefined) {
+    if (progress === null) bar.removeAttribute('value');
+    else bar.value = progress;
+  }
+  const box = $('up-buttons');
+  box.innerHTML = '';
+  for (const b of buttons) {
+    const el = document.createElement('button');
+    el.textContent = b.label;
+    if (b.primary) el.className = 'primary';
+    el.onclick = b.run;
+    box.append(el);
+  }
+  if (!$('update-dialog').open) $('update-dialog').showModal();
+}
+
+const upClose = () => $('update-dialog').close();
+
+function showUpdateOffer(info) {
+  upOffer = info;
+  const canInstall = info.canSelfUpdate && inAppWindow && info.asset;
+  const mb = info.asset?.size ? ` (${(info.asset.size / 1048576).toFixed(0)} MB)` : '';
+  upShow({
+    title: 'A new version is available',
+    body: `<p>LLM Icarus <b>${esc(info.latest)}</b> is ready. You have ${esc(info.current)}.</p>` +
+      (canInstall ? `<p class="muted">It downloads${esc(mb)} and installs itself, then LLM Icarus restarts. Your chats, models and settings are kept.</p>` : `<p class="muted">This copy cannot install it by itself. Open the release page to download the installer.</p>`) +
+      (info.notes ? `<div class="notes">${esc(info.notes)}</div>` : ''),
+    buttons: [
+      { label: 'Not now', run: upClose },
+      canInstall ? { label: 'Install now', primary: true, run: startUpdateDownload } : { label: 'Open the release page', primary: true, run: () => { window.open(info.page, '_blank'); upClose(); } },
+    ],
+  });
+}
+
+async function startUpdateDownload() {
+  upShow({ title: 'Downloading the update', body: '<p>Starting…</p>', progress: null, buttons: [{ label: 'Cancel', run: cancelUpdateDownload }] });
+  try {
+    await api('/api/app-update/download', { method: 'POST' });
+  } catch (e) {
+    showUpdateError(e.message);
+  }
+}
+
+async function cancelUpdateDownload() {
+  try {
+    await api('/api/app-update/cancel', { method: 'POST' });
+  } catch {
+    /* closing the dialog is enough */
+  }
+  upClose();
+}
+
+function showUpdateError(message) {
+  upShow({
+    title: 'The update could not be installed',
+    body: `<p>${esc(message)}</p>`,
+    buttons: [{ label: 'Close', run: upClose }, { label: 'Try again', primary: true, run: startUpdateDownload }],
+  });
+}
+
+function onAppUpdateEvent(ev) {
+  if (!$('update-dialog').open) return;
+  if (ev.phase === 'downloading') {
+    const pct = ev.total ? Math.min(100, (ev.received / ev.total) * 100) : null;
+    upShow({
+      title: 'Downloading the update',
+      body: `<p>LLM Icarus ${esc(ev.version || '')}: ${fmtSize(ev.received || 0)}${ev.total ? ' of ' + fmtSize(ev.total) : ''}${pct !== null ? ` (${Math.round(pct)}%)` : ''}</p>`,
+      progress: pct,
+      buttons: [{ label: 'Cancel', run: cancelUpdateDownload }],
+    });
+  } else if (ev.phase === 'ready') {
+    upShow({
+      title: 'Update downloaded',
+      body: '<p>LLM Icarus will now restart to finish installing the update.</p>',
+      progress: 100,
+      buttons: [{ label: 'OK', primary: true, run: (e) => {
+        e.target.disabled = true;
+        $('up-body').innerHTML = '<p>Restarting…</p>';
+        window.chrome.webview.postMessage('install-update'); // the app window closes the app, runs the installer and starts the new version
+      } }],
+    });
+  } else if (ev.phase === 'error') {
+    showUpdateError(ev.error || 'Something went wrong.');
+  } else if (ev.phase === 'idle') {
+    upClose();
+  }
+}
+
+// no Escape while a download or restart is in progress: use the buttons
+$('update-dialog').addEventListener('cancel', (e) => {
+  if (!['Not now', 'Close'].some((l) => [...$('up-buttons').children].some((b) => b.textContent === l))) e.preventDefault();
+});
+
+async function startupUpdateCheck() {
+  try {
+    const info = await api('/api/app-update/check', { method: 'POST', body: { auto: true } });
+    if (info.newer && !$('update-dialog').open) showUpdateOffer(info);
+  } catch {
+    /* offline or GitHub is busy: try again next start */
+  }
+}
+
+async function renderAppTab() {
+  const v = state.version?.version || '';
+  $('app-info').textContent = `Version ${v}`;
+  $('app-auto').checked = state.settings?.checkAppUpdates !== false;
+  $('app-auto').onchange = async (e) => {
+    state.settings = await api('/api/settings', { method: 'POST', body: { checkAppUpdates: e.target.checked } });
+  };
+  $('app-check').onclick = async () => {
+    const b = $('app-check');
+    const msg = $('app-check-msg');
+    b.disabled = true;
+    msg.textContent = 'Checking…';
+    try {
+      const info = await api('/api/app-update/check', { method: 'POST', body: {} });
+      if (info.error) msg.textContent = `Could not check: ${info.error}`;
+      else if (info.newer) {
+        msg.textContent = `Version ${info.latest} is available.`;
+        showUpdateOffer(info);
+      } else msg.textContent = info.latest ? 'You have the newest version.' : 'No releases were found.';
+    } catch (e) {
+      msg.textContent = e.message;
+    } finally {
+      b.disabled = false;
+    }
+  };
+}
+
 // live progress from the server
 const es = new EventSource('/api/events');
 es.onmessage = async (e) => {
   const ev = JSON.parse(e.data);
+  if (ev.type === 'app-update') return onAppUpdateEvent(ev);
   const bar = (label, done, total) => `${esc(label)}<div class="bar"><div style="width:${total ? Math.min(100, (done / total) * 100) : 0}%"></div></div><small>${fmtSize(done)}${total ? ' / ' + fmtSize(total) : ''}</small>`;
   if (ev.type === 'transcribe-job' || ev.type === 'transcribe-segment') return onTranscribeEvent(ev);
   if (ev.type === 'image-job') return onImageEvent(ev);
@@ -2756,3 +2934,5 @@ async function restoreSession() {
 
 await refresh();
 await restoreSession();
+showVersion();
+setTimeout(startupUpdateCheck, 2000); // after the window has settled; never holds up the app

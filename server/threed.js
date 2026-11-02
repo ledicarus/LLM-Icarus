@@ -9,15 +9,21 @@ import * as pyenv from './pyenv.js';
 import * as platform from './platform.js';
 import * as store from './store.js';
 import * as openscad from './openscad.js';
+import * as image from './image.js';
+import * as llm from './llm.js';
 import { emit } from './events.js';
 
-// 3D mode: makes STL files, one job at a time. Two ways in:
+// 3D mode: makes STL files, one job at a time. Three ways in:
 //   scad    the chat model writes an OpenSCAD script from your description and sizes; OpenSCAD turns it into a solid.
 //           You can also paste or edit the script yourself ("code").
 //   photos  outlines (silhouettes) from the front, the right side and above are carved into a solid at the sizes you give
 //           (server/carve_helper.py)
+//   sweep   for long rounded things (a banana, a carrot, a bone): the image model draws one side picture of the named
+//           object, its outline gives the centre line and thickness, and a round solid is swept along it at a real
+//           size (given, or asked of the chat model). server/sweep_helper.py
 
 const HELPER = path.join(ROOT, 'server', 'carve_helper.py');
+const SWEEP_HELPER = path.join(ROOT, 'server', 'sweep_helper.py');
 const OUT = path.join(DATA, '3d');
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -42,14 +48,25 @@ const mm = (v) => (v === undefined || v === null || v === '' || !Number.isFinite
 
 const summary = (j) => ({
   id: j.id, status: j.status, stage: j.stage, error: j.error, created: j.created, method: j.spec.method,
-  prompt: j.spec.prompt, refine: !!j.spec.baseJob, manual: !!j.spec.code, modelName: j.modelName,
+  prompt: j.spec.prompt, object: j.spec.object, lengthUsed: j.spec.lengthUsed, refine: !!j.spec.baseJob, manual: !!j.spec.code, modelName: j.modelName,
   sizeAsked: j.spec.sizeMm, sizeText: j.spec.sizeText, views: j.spec.viewNames, quality: j.spec.quality,
   files: j.files, size: j.size, triangles: j.triangles, warning: j.warning, note: j.note,
 });
 
 export function status() {
-  return { scad: openscad.installed(), carve: carveInstalled() };
+  return { scad: openscad.installed(), carve: carveInstalled(), sweep: image.installed() };
 }
+
+// "make a 3D banana, 190 mm long" -> "banana": the name of the object for the picture prompt, without sizes and filler
+const objectName = (t) => String(t || '')
+  .replace(/\b\d+(?:[.,]\d+)?\s*(?:x\s*\d+(?:[.,]\d+)?\s*)*(?:mm|millimet\w+|cm|centimet\w+|inch(?:es)?|in)\b(?:\s*(?:long|wide|tall|high|deep|across|in length))?/gi, '')
+  .replace(/^\s*(?:please\s+)?(?:make|create|build|model|generate|design)\s+(?:me\s+)?/i, '')
+  .replace(/\b(?:an?\s+)?(?:3d|stl)\b(?:\s+(?:model|file|print))?(?:\s+of)?/gi, '')
+  .replace(/^\s*(?:an?|the)\s+/i, '')
+  .replace(/[\s,;]+$/, '')
+  .replace(/\s{2,}/g, ' ')
+  .trim()
+  .slice(0, 120);
 
 // Everything 3D mode needs: OpenSCAD, then the Python carving tools. Skips what is already there.
 export async function installAll() {
@@ -59,8 +76,8 @@ export async function installAll() {
 }
 
 export function submit(p) {
-  const method = ['scad', 'photos'].includes(p.method) ? p.method : null;
-  if (!method) throw new Error('Choose a method: scad or photos');
+  const method = ['scad', 'photos', 'sweep'].includes(p.method) ? p.method : null;
+  if (!method) throw new Error('Choose a method: scad, photos or sweep');
   const prompt = (p.prompt || '').trim();
   const sizeMm = { x: mm(p.sizeMm?.x), y: mm(p.sizeMm?.y), z: mm(p.sizeMm?.z) };
   const spec = {
@@ -90,6 +107,24 @@ export function submit(p) {
         spec.baseCode = fs.readFileSync(f, 'utf8');
         spec.baseJob = p.baseJob;
       }
+    }
+  } else if (method === 'sweep') {
+    if (!image.installed()) throw new Error('The image tools are not installed yet (the Image screen can install them)');
+    const picModel = p.imageModelId ? models.get(p.imageModelId) : models.list().find((m) => m.kind === 'image' && m.exists !== false);
+    if (!picModel || picModel.kind !== 'image') throw new Error('There is no image (SDXL) model yet. Add one in Settings > Models');
+    spec.imageModelId = picModel.id;
+    spec.object = objectName(prompt);
+    if (!spec.object) throw new Error('Name the object, for example "a banana"');
+    const longest = Math.max(sizeMm.x || 0, sizeMm.y || 0, sizeMm.z || 0);
+    if (longest) {
+      spec.lengthMm = longest;
+    } else {
+      // no size given: the chat model is asked how big one usually is
+      model = models.get(p.modelId);
+      if (!model || model.kind === 'image') throw new Error('Give its size (for example "190 mm long") or pick a chat model, which can tell how big one usually is');
+      if (!fs.existsSync(model.path)) throw new Error(`Model file is missing: ${model.path}`);
+      if (!engine.status().installed) throw new Error('The chat engine is not installed yet');
+      spec.modelId = model.id;
     }
   } else {
     if (!carveInstalled()) throw new Error('The 3D carving tools are not installed yet (the 3D screen or Settings > Engines can install them)');
@@ -131,7 +166,7 @@ async function pump() {
   try {
     fs.mkdirSync(job.dir, { recursive: true });
     job.abort = new AbortController();
-    await (job.spec.method === 'scad' ? makeFromScad(job) : carveFromPictures(job));
+    await ({ scad: makeFromScad, photos: carveFromPictures, sweep: makeBySweep }[job.spec.method])(job);
     if (job.status !== 'cancelled') job.status = 'done';
   } catch (e) {
     if (job.status !== 'cancelled') {
@@ -191,20 +226,11 @@ async function askModel(job, messages) {
   await engine.load(model, { ctx: Math.max(ctx, s.thinking ? 16384 : 8192), kvQuant, reasoning: s.thinking ? 'on' : 'off' });
   if (job.status === 'cancelled') return '';
   setStage(job, 'running', 'designing');
-  const res = await fetch(`${engine.baseUrl()}/v1/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, temperature: 0.4, max_tokens: s.thinking ? 12000 : 4000, stream: false }),
-    signal: job.abort.signal,
-  });
-  if (!res.ok) throw new Error(`Engine error ${res.status}: ${await res.text()}`);
-  const choice = (await res.json()).choices?.[0];
-  const text = choice?.message?.content || '';
+  const { text, thinking, finish } = await llm.complete(messages, { temperature: 0.4, maxTokens: s.thinking ? 12000 : 4000, signal: job.abort.signal });
   // keep the raw answer next to the result: when a design goes wrong this shows what the model actually said
   job.replies = (job.replies || 0) + 1;
-  const thinking = choice?.message?.reasoning_content;
   fs.writeFileSync(path.join(job.dir, `reply-${job.replies}.txt`), `${thinking ? `[thinking]\n${thinking}\n\n[answer]\n` : ''}${text}`);
-  if (!text.trim() && choice?.finish_reason === 'length') {
+  if (!text.trim() && finish === 'length') {
     throw new Error('The model ran out of room while thinking, before it wrote the design. Turn off "Think longer", or ask for something simpler.');
   }
   return text;
@@ -278,9 +304,71 @@ async function makeFromScad(job) {
 async function carveFromPictures(job) {
   const s = job.spec;
   setStage(job, 'running', 'carving');
+  await runHelper(job, HELPER, pyenv.pythonExe(), { views: s.views, size_mm: s.sizeMm, quality: s.quality, background: s.background, smooth: true });
+}
+
+// ---- sweeping a solid along the outline of a generated picture ------------------
+
+const PICTURE_NEGATIVE = 'many, several, pile, bunch, group, pieces, slices, cut open, text, table, shelf, hand, shadow, reflection, pattern, background objects';
+const pictureWords = (object) => `one single ${object}, seen from the side, isolated on a plain pure white background, product photo, soft even lighting, the entire object in frame, centered, nothing else in the picture`;
+
+async function makeBySweep(job) {
+  const s = job.spec;
+  let lengthMm = s.lengthMm;
+  if (!lengthMm) {
+    const model = models.get(s.modelId);
+    const { ctx, kvQuant } = store.settings();
+    setStage(job, 'loading', 'loading the model');
+    await engine.load(model, { ctx: Math.max(ctx, 8192), kvQuant, reasoning: 'off' });
+    if (job.status === 'cancelled') return;
+    setStage(job, 'running', 'asking the model how big it is');
+    const { text } = await llm.complete([
+      { role: 'system', content: 'You answer with one number only, no words.' },
+      { role: 'user', content: `What is the typical length in millimetres, measured along its body from one end to the other, of one ${s.object}? Reply with just the number.` },
+    ], { maxTokens: 200, temperature: 0, signal: job.abort.signal });
+    const n = Number(/\d+(?:[.,]\d+)?/.exec(text)?.[0].replace(',', '.'));
+    if (!(n >= 5 && n <= 3000)) throw new Error(`The model could not say how big a ${s.object} is. Give the size yourself, for example "190 mm long".`);
+    lengthMm = n;
+    job.note = `Size: the model's typical ${s.object} is ${n} mm long`;
+  }
+  s.lengthUsed = lengthMm;
+
+  // the image model draws a few candidates; the helper picks the cleanest single object
+  const count = s.quality === 1 ? 2 : s.quality === 2 ? 4 : 6;
+  const pj = image.submit({ modelId: s.imageModelId, prompt: pictureWords(s.object), negative: PICTURE_NEGATIVE, width: 1024, height: 768, count });
+  job.imageJob = pj;
+  const tick = setInterval(() => {
+    if (job.status === 'cancelled') return;
+    const where = pj.status === 'queued' ? 'waiting for the image model' : pj.image != null ? `drawing the picture (${pj.image + 1} of ${count})` : 'loading the image model';
+    if (job.stage !== where) setStage(job, 'running', where);
+  }, 1500);
+  setStage(job, 'running', 'loading the image model');
+  try {
+    await pj.finished;
+  } finally {
+    clearInterval(tick);
+    job.imageJob = null;
+  }
+  if (job.status === 'cancelled') return;
+  if (pj.status !== 'done') throw new Error(pj.error || 'The picture could not be drawn');
+  const pictures = pj.files.map((f) => image.fileFor(pj.id, f.file)).filter(Boolean);
+  try {
+    setStage(job, 'running', 'measuring the outline');
+    await runHelper(job, SWEEP_HELPER, image.pyPath(), { images: pictures, length_mm: lengthMm, object: s.object });
+  } catch (e) {
+    // keep the pictures that were rejected, so it is possible to see what the image model drew
+    pictures.forEach((f, i) => fs.copyFileSync(f, path.join(job.dir, `rejected-${i + 1}.png`)));
+    throw e;
+  } finally {
+    image.remove(pj.id); // the chosen picture is kept in this job; the rest should not clutter the Image list
+  }
+}
+
+// Runs a Python helper that reads a spec file and reports progress as JSON lines on stdout.
+async function runHelper(job, helper, python, spec) {
   const specFile = path.join(job.dir, 'spec.json');
-  writeJson(specFile, { outdir: job.dir, views: s.views, size_mm: s.sizeMm, quality: s.quality, background: s.background, smooth: true });
-  const child = spawn(pyenv.pythonExe(), ['-u', HELPER, specFile], { env: { ...process.env, PYTHONIOENCODING: 'utf-8' }, stdio: ['ignore', 'pipe', 'pipe'], ...platform.spawnGroup() });
+  writeJson(specFile, { outdir: job.dir, ...spec });
+  const child = spawn(python, ['-u', helper, specFile], { env: { ...process.env, PYTHONIOENCODING: 'utf-8' }, stdio: ['ignore', 'pipe', 'pipe'], ...platform.spawnGroup() });
   job.child = child;
   let stderr = '';
   let helperError = '';
@@ -298,7 +386,7 @@ async function carveFromPictures(job) {
         continue;
       }
       if (m.type === 'stage') setStage(job, 'running', m.name);
-      else if (m.type === 'info') Object.assign(job, { size: m.size, triangles: m.triangles, note: m.note || undefined, sizeUsed: m.sizeUsed });
+      else if (m.type === 'info') Object.assign(job, { size: m.size, triangles: m.triangles, note: [job.note, m.note].filter(Boolean).join('. ') || undefined, sizeUsed: m.sizeUsed });
       else if (m.type === 'file') job.files[m.kind] = m.file;
       else if (m.type === 'error') helperError = m.message;
     }
@@ -324,6 +412,7 @@ export function cancel(id) {
   } else if (['loading', 'running'].includes(job.status)) {
     job.status = 'cancelled';
     job.abort?.abort();
+    if (job.imageJob) image.cancel(job.imageJob.id);
     if (job.child) platform.killTree(job.child.pid);
   }
   return true;
@@ -339,7 +428,7 @@ export function list() {
   return [...live, ...saved.filter((j) => !ids.has(j.id))].sort((a, b) => (b.created || '').localeCompare(a.created || ''));
 }
 
-const FILES = /^(out\.stl|model\.scad)$/;
+const FILES = /^(out\.stl|model\.scad|picture\.png)$/;
 export function fileFor(id, file) {
   if (!/^[\w-]+$/.test(id) || !FILES.test(file)) return null;
   const p = path.join(OUT, id, file);

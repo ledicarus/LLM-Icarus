@@ -7,6 +7,7 @@
 // Set ICARUS_PORT if the app is not on the default port (3210).
 
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 
 const BASE = `http://127.0.0.1:${process.env.ICARUS_PORT || 3210}`;
@@ -16,10 +17,31 @@ function fail(message, code = 1) {
   process.exit(code);
 }
 
+// A plain http request, not fetch: fetch gives up after 5 minutes of waiting for an answer, and a drawing, a 3D part or
+// a coding task on a local model can take much longer than that.
+function request(urlPath, options = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(new URL(BASE + urlPath), { method: options.method || 'GET', headers: options.headers }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('error', reject);
+      res.on('end', () => resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, text: async () => Buffer.concat(chunks).toString('utf8') }));
+    });
+    req.on('error', reject);
+    const signal = options.signal;
+    if (signal) {
+      if (signal.aborted) req.destroy(signal.reason);
+      else signal.addEventListener('abort', () => req.destroy(signal.reason), { once: true });
+    }
+    if (options.body) req.write(options.body);
+    req.end();
+  });
+}
+
 async function call(path, options = {}) {
   let res;
   try {
-    res = await fetch(BASE + path, options);
+    res = await request(path, options);
   } catch (e) {
     if (e.name === 'TimeoutError' || e.name === 'AbortError') fail('Timed out waiting for LLM Icarus. The task may still be running in the app.', 3);
     fail(`Could not reach LLM Icarus at ${BASE}. It is not running (or the app was closed or restarted mid-task). Ask the user to open LLM Icarus, then try again.`, 2);
@@ -125,7 +147,8 @@ if (command === 'status') {
   const prompt = positional.join(' ').trim();
   const photos = !!(flags.front || flags.side || flags.top);
   if (!photos && !prompt && !flags.code) fail('Describe the part: icarus.mjs 3d "a pen holder" --size 80x60x100  (or give --front/--side/--top pictures, or --code file.scad)');
-  const body = { method: photos ? 'photos' : 'scad', prompt, wait: true };
+  const sweep = flags.method === 'sweep' && !photos;
+  const body = { method: photos ? 'photos' : sweep ? 'sweep' : 'scad', prompt, wait: true };
   if (flags.size) {
     const [x, y, z] = String(flags.size).toLowerCase().split('x').map(Number);
     body.sizeMm = { x: x || undefined, y: y || undefined, z: z || undefined };
@@ -137,6 +160,17 @@ if (command === 'status') {
     if (flags.quality) body.quality = Number(flags.quality);
   } else if (flags.code) {
     body.code = fs.readFileSync(path.resolve(flags.code), 'utf8');
+  } else if (sweep) {
+    // a long rounded object: the image model draws it, a solid is built from the picture; the chat model supplies the size if --size is missing
+    const all = await call('/api/models');
+    const pics = all.filter((x) => x.kind === 'image' && x.exists !== false);
+    if (!pics.length) fail('No image (SDXL) model is installed. Add one in LLM Icarus first.');
+    body.imageModelId = pics[0].id;
+    if (!flags.size) {
+      const loaded = (await call('/api/engine')).loaded?.modelId;
+      const chat = all.filter((x) => x.kind !== 'image' && x.exists !== false);
+      body.modelId = flags.model ? pick(chat, flags.model, 'model').id : loaded || chat[0]?.id;
+    }
   } else {
     const chat = (await call('/api/models')).filter((x) => x.kind !== 'image' && x.exists !== false);
     const loaded = (await call('/api/engine')).loaded?.modelId;
@@ -152,7 +186,7 @@ if (command === 'status') {
   });
   const dir = path.resolve(flags.out || '.');
   fs.mkdirSync(dir, { recursive: true });
-  for (const [ext, url] of [['stl', out.stl], ['scad', out.scad]]) {
+  for (const [ext, url] of [['stl', out.stl], ['scad', out.scad], ['png', out.picture]]) {
     if (!url) continue;
     const file = path.join(dir, `icarus-${out.id}.${ext}`);
     fs.writeFileSync(file, Buffer.from(await (await fetch(BASE + url)).arrayBuffer()));
@@ -161,5 +195,5 @@ if (command === 'status') {
   console.error(`(solid ${out.id}; size ${JSON.stringify(out.size)} mm, ${out.triangles} triangles)`);
   if (out.warning) console.error('WARNING: ' + out.warning);
 } else {
-  fail('Commands: status | models | projects | ask "prompt" [...] | vector "description" [...] | 3d "description" [--size WxDxH] [--front f.png --side s.png --top t.png] [--out folder]');
+  fail('Commands: status | models | projects | ask "prompt" [...] | vector "description" [...] | 3d "description" [--size WxDxH] [--method sweep] [--front f.png --side s.png --top t.png] [--out folder]');
 }

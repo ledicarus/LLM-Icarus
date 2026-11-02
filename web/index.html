@@ -10,7 +10,7 @@
 <body>
 <div id="app">
   <aside id="sidebar">
-    <div class="brand"><img id="brand-logo" src="/logo.png" alt=""><span>LLM Icarus</span><button id="close-sidebar" class="ghost icon" title="Hide the sidebar" aria-label="Hide the sidebar">«</button></div>
+    <div class="brand"><img id="brand-logo" src="/logo.png" alt=""><div class="brand-text"><span>LLM Icarus</span><small id="app-version"></small></div><button id="close-sidebar" class="ghost icon" title="Hide the sidebar" aria-label="Hide the sidebar">«</button></div>
     <button id="new-chat" class="primary">+ New chat</button>
     <div class="sb-title">Projects</div>
     <div id="project-list"></div>
@@ -111,6 +111,21 @@
     <h3>Transcribe and Image engines</h3>
     <div id="component-box"></div>
   </section>
+
+  <section id="tab-app" class="tab-panel" hidden>
+    <h3>LLM Icarus</h3>
+    <p id="app-info" class="muted"></p>
+    <div class="row"><button id="app-check">Check for a new version</button><small id="app-check-msg" class="muted msg-line"></small></div>
+    <label class="muted"><input type="checkbox" id="app-auto"> Check for a new version when LLM Icarus starts</label>
+    <p><small class="muted">The check asks github.com for the newest release of LLM Icarus and sends nothing else. A new version is only downloaded and installed if you say so.</small></p>
+  </section>
+</dialog>
+
+<dialog id="update-dialog">
+  <h2 id="up-title"></h2>
+  <div id="up-body"></div>
+  <progress id="up-bar" max="100" value="0" hidden></progress>
+  <div class="row" id="up-buttons"></div>
 </dialog>
 
 <dialog id="viewer-dialog">

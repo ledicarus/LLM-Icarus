@@ -77,6 +77,8 @@ Name: "{autodesktop}\LLM Icarus"; Filename: "{app}\LLM Icarus.exe"; WorkingDir: 
 
 [Run]
 Filename: "{app}\LLM Icarus.exe"; WorkingDir: "{app}"; Description: "Launch LLM Icarus"; Flags: postinstall nowait skipifsilent
+; an update started from inside the app (/UPDATE=1) runs quietly: open the new version when it is done
+Filename: "{app}\LLM Icarus.exe"; WorkingDir: "{app}"; Flags: nowait; Check: IsUpdate
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\licenses"
@@ -96,6 +98,12 @@ const
   IDX_THREED = 6;
   IDX_STARTER = 7;
   IDX_SDXL = 8;
+
+// The app updating itself runs this installer with /UPDATE=1: replace the program files only, no component downloads.
+function IsUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:UPDATE|0}') = '1';
+end;
 
 function HasNvidiaGpu: Boolean;
 begin
@@ -134,6 +142,7 @@ var
   Code: Integer;
 begin
   if CurStep <> ssPostInstall then Exit;
+  if IsUpdate then Exit;
   Args := SetupArgs;
   if Args = '' then Exit;
   Cmd := '/c ""' + ExpandConstant('{app}\runtime\node.exe') + '" "' + ExpandConstant('{app}\server\setup.js') + '"' + Args;
