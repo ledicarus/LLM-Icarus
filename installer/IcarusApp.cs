@@ -159,7 +159,7 @@ namespace LLMIcarus
 
             var ok = new Button();
             ok.Text = "OK";
-            ok.DialogResult = DialogResult.OK;
+            ok.Click += delegate { Close(); }; // this window is shown with Show(), not ShowDialog(), so a DialogResult would do nothing
             ok.FlatStyle = FlatStyle.Flat;
             ok.FlatAppearance.BorderSize = 0;
             ok.BackColor = Color.FromArgb(31, 111, 196);
