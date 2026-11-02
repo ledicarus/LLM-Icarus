@@ -5,6 +5,10 @@ under "Unreleased"; `installer\build-all.ps1` moves them under the new version w
 
 ## Unreleased
 
+## 2.3.11-1-26 (November 1, 2026)
+
+- Fixed: the OK button in the About window now closes it (it did nothing before).
+
 ## 2.2.11-1-26 (November 1, 2026)
 
 - The question shown when you close the window now has a **Remember my choice** box. Tick it with Run in background or Quit and the window will do that every time without asking (Cancel never saves anything). You can change it later in Settings > About under "When the window is closed": Ask me every time, Keep running in the background, or Quit LLM Icarus. Windows app only.
