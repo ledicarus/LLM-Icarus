@@ -73,7 +73,7 @@ $out = "$here\out"
 New-Item -ItemType Directory -Force $out | Out-Null
 Copy-Item "$wv\*.dll" $out -Force
 & $csc /nologo /target:winexe /platform:x64 "/out:$out\LLM Icarus.exe" "/win32icon:$here\icarus.ico" "/win32manifest:$here\app.manifest" `
-    /r:System.Windows.Forms.dll /r:System.Drawing.dll "/r:$wv\Microsoft.Web.WebView2.Core.dll" "/r:$wv\Microsoft.Web.WebView2.WinForms.dll" "$here\IcarusApp.cs"
+    /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll "/r:$wv\Microsoft.Web.WebView2.Core.dll" "/r:$wv\Microsoft.Web.WebView2.WinForms.dll" "$here\IcarusApp.cs"
 if ($LASTEXITCODE -ne 0) { throw "Compiling LLM Icarus.exe failed (exit $LASTEXITCODE)" }
 Write-Host "Built $out\LLM Icarus.exe"
 

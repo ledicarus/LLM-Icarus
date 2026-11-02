@@ -108,6 +108,192 @@ namespace LLMIcarus
         }
     }
 
+    // The small panel that appears above the icon in the notification area while the mouse is over it: the same LED bars as
+    // the performance sidebar, with the part used by LLM Icarus itself glowing on top. It never takes the keyboard focus.
+    class PerfPopup : Form
+    {
+        class BarInfo
+        {
+            public string Label;
+            public Color Color;
+            public bool Rainbow;      // CPU: green at the bottom, red at the top
+            public bool Warm;         // temperature: amber to red
+            public double? Total;     // 0..100, null = not available
+            public double Mine;       // the part LLM Icarus uses
+            public string Text = "–";
+            public string MineText = "";
+        }
+
+        readonly BarInfo[] bars = new BarInfo[]
+        {
+            new BarInfo { Label = "CPU", Color = Color.FromArgb(47, 224, 90), Rainbow = true },
+            new BarInfo { Label = "Clock", Color = Color.FromArgb(255, 59, 48) },
+            new BarInfo { Label = "Temp", Color = Color.FromArgb(255, 165, 31), Warm = true },
+            new BarInfo { Label = "RAM", Color = Color.FromArgb(37, 211, 196) },
+            new BarInfo { Label = "GPU", Color = Color.FromArgb(58, 141, 255) },
+            new BarInfo { Label = "VRAM", Color = Color.FromArgb(160, 112, 255) },
+        };
+        bool haveMe;
+        readonly System.Windows.Forms.Timer pulse = new System.Windows.Forms.Timer();
+
+        public PerfPopup()
+        {
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            TopMost = true;
+            StartPosition = FormStartPosition.Manual;
+            BackColor = Color.FromArgb(23, 23, 27);
+            ClientSize = new Size(286, 262);
+            DoubleBuffered = true;
+            pulse.Interval = 140;
+            pulse.Tick += delegate { if (Visible) Invalidate(); };
+            VisibleChanged += delegate { pulse.Enabled = Visible; };
+        }
+
+        protected override bool ShowWithoutActivation { get { return true; } }
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                cp.ExStyle |= 0x08000000 | 0x00000080 | 0x00000008; // no activate, tool window (no taskbar button), topmost
+                return cp;
+            }
+        }
+
+        static object Get(System.Collections.Generic.Dictionary<string, object> d, string key)
+        {
+            object v;
+            return d != null && d.TryGetValue(key, out v) ? v : null;
+        }
+
+        static double? Num(object o)
+        {
+            if (o == null) return null;
+            try { return Convert.ToDouble(o, System.Globalization.CultureInfo.InvariantCulture); }
+            catch { return null; }
+        }
+
+        // d = the parsed answer of /api/sysmon
+        public void SetData(System.Collections.Generic.Dictionary<string, object> d)
+        {
+            var g = Get(d, "gpu") as System.Collections.Generic.Dictionary<string, object>;
+            var me = Get(d, "me") as System.Collections.Generic.Dictionary<string, object>;
+            haveMe = me != null;
+            double? cpu = Num(Get(d, "cpu")), clock = Num(Get(d, "clockGHz")), baseGhz = Num(Get(d, "baseGHz")), temp = Num(Get(d, "tempC"));
+            double? ramUsed = Num(Get(d, "ramUsedGB")), ramTotal = Num(Get(d, "ramTotalGB"));
+            double? gpu = Num(Get(g, "util")), vUsed = Num(Get(g, "memUsedMB")), vTotal = Num(Get(g, "memTotalMB"));
+            double meCpu = Num(Get(me, "cpu")) ?? 0, meRam = Num(Get(me, "ramGB")) ?? 0, meGpu = Num(Get(me, "gpu")) ?? 0, meVram = Num(Get(me, "vramMB")) ?? 0;
+
+            Set(0, cpu, cpu.HasValue ? cpu.Value.ToString("0.0") + "%" : "", meCpu);
+            Set(1, clock.HasValue && baseGhz.HasValue && baseGhz.Value > 0 ? clock.Value / (baseGhz.Value * 1.5) * 100 : (double?)null, clock.HasValue ? clock.Value.ToString("0.0") + "G" : "", 0);
+            Set(2, temp, temp.HasValue ? Math.Round(temp.Value) + "°" : "", 0);
+            double? ramPct = ramUsed.HasValue && ramTotal.HasValue && ramTotal.Value > 0 ? ramUsed.Value / ramTotal.Value * 100 : (double?)null;
+            Set(3, ramPct, ramPct.HasValue ? Math.Round(ramPct.Value) + "%" : "", ramTotal.HasValue && ramTotal.Value > 0 ? meRam / ramTotal.Value * 100 : 0);
+            Set(4, gpu, gpu.HasValue ? Math.Round(gpu.Value) + "%" : "", meGpu);
+            double? vPct = vUsed.HasValue && vTotal.HasValue && vTotal.Value > 0 ? vUsed.Value / vTotal.Value * 100 : (double?)null;
+            Set(5, vPct, vPct.HasValue ? Math.Round(vPct.Value) + "%" : "", vTotal.HasValue && vTotal.Value > 0 ? meVram / vTotal.Value * 100 : 0);
+            Invalidate();
+        }
+
+        void Set(int i, double? total, string text, double mine)
+        {
+            BarInfo b = bars[i];
+            b.Total = total.HasValue ? (double?)Math.Max(0, Math.Min(100, total.Value)) : null;
+            b.Mine = b.Total.HasValue && haveMe ? Math.Min(b.Total.Value, Math.Max(0, mine)) : 0;
+            b.Text = b.Total.HasValue ? text : "–";
+            b.MineText = b.Mine > 0.4 ? "▲" + Math.Round(b.Mine) + "%" : "";
+        }
+
+        static Color Blend(Color a, Color b, double t)
+        {
+            return Color.FromArgb((int)(a.R + (b.R - a.R) * t), (int)(a.G + (b.G - a.G) * t), (int)(a.B + (b.B - a.B) * t));
+        }
+
+        static Color Stops(double[] at, Color[] colors, double x)
+        {
+            for (int i = 1; i < at.Length; i++)
+                if (x <= at[i]) return Blend(colors[i - 1], colors[i], (x - at[i - 1]) / (at[i] - at[i - 1]));
+            return colors[colors.Length - 1];
+        }
+
+        Color SegmentColor(BarInfo b, double x)
+        {
+            if (b.Rainbow)
+                return Stops(new double[] { 0, .38, .62, .82, 1 },
+                    new Color[] { Color.FromArgb(34, 224, 74), Color.FromArgb(127, 220, 43), Color.FromArgb(230, 213, 42), Color.FromArgb(255, 138, 31), Color.FromArgb(255, 59, 48) }, x);
+            if (b.Warm)
+                return Stops(new double[] { 0, .6, 1 }, new Color[] { Color.FromArgb(255, 178, 31), Color.FromArgb(255, 165, 31), Color.FromArgb(255, 90, 31) }, x);
+            return b.Color;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            using (var border = new Pen(Color.FromArgb(60, 62, 70))) g.DrawRectangle(border, 0, 0, Width - 1, Height - 1);
+            using (var f = new Font("Segoe UI", 8f))
+            using (var gray = new SolidBrush(Color.FromArgb(138, 143, 153)))
+                g.DrawString("PERFORMANCE", f, gray, 14, 8);
+
+            const int colW = 38, gap = 6, top = 50, barH = 128, step = 8, segH = 5;
+            int n = barH / step;
+            double glow = 0.55 + 0.45 * Math.Sin(Environment.TickCount / 330.0);
+            using (var labelFont = new Font("Segoe UI Semibold", 8.5f))
+            using (var valFont = new Font("Segoe UI", 8.5f))
+            using (var meFont = new Font("Segoe UI", 7.5f))
+            using (var white = new SolidBrush(Color.FromArgb(230, 232, 236)))
+            using (var fmt = new StringFormat { Alignment = StringAlignment.Center })
+            {
+                for (int k = 0; k < bars.Length; k++)
+                {
+                    BarInfo b = bars[k];
+                    int x = 14 + k * (colW + gap);
+                    using (var lb = new SolidBrush(b.Color)) g.DrawString(b.Label, labelFont, lb, new RectangleF(x - 4, 28, colW + 8, 16), fmt);
+                    double total = b.Total.HasValue ? b.Total.Value : 0;
+                    double others = total - b.Mine;
+                    for (int i = 0; i < n; i++)
+                    {
+                        double centre = (i + 0.5) / n * 100;
+                        int y = top + barH - (i + 1) * step + (step - segH);
+                        var rect = new Rectangle(x + 2, y, colW - 4, segH);
+                        Color c = SegmentColor(b, (i + 0.5) / n);
+                        if (centre > total) { using (var br = new SolidBrush(Color.FromArgb(34, c))) g.FillRectangle(br, rect); continue; }
+                        if (centre <= others || b.Mine <= 0)
+                        {
+                            using (var br = new SolidBrush(Color.FromArgb(205, c))) g.FillRectangle(br, rect);
+                        }
+                        else
+                        {
+                            // the part used by LLM Icarus: brighter, with a pulsing glow around it
+                            using (var gl2 = new SolidBrush(Color.FromArgb((int)(34 * glow), c))) g.FillRectangle(gl2, Rectangle.Inflate(rect, 5, 3));
+                            using (var gl1 = new SolidBrush(Color.FromArgb((int)(70 * glow), c))) g.FillRectangle(gl1, Rectangle.Inflate(rect, 2, 1));
+                            using (var br = new SolidBrush(Blend(c, Color.White, 0.30 + 0.12 * glow))) g.FillRectangle(br, rect);
+                        }
+                    }
+                    g.DrawString(b.Text, valFont, white, new RectangleF(x - 4, top + barH + 5, colW + 8, 16), fmt);
+                    if (b.MineText.Length > 0)
+                        using (var mb = new SolidBrush(b.Color)) g.DrawString(b.MineText, meFont, mb, new RectangleF(x - 4, top + barH + 21, colW + 8, 14), fmt);
+                }
+            }
+            using (var f = new Font("Segoe UI", 8f))
+            using (var gray = new SolidBrush(Color.FromArgb(138, 143, 153)))
+            {
+                using (var gl = new SolidBrush(Color.FromArgb((int)(90 * (0.55 + 0.45 * Math.Sin(Environment.TickCount / 330.0))), 207, 210, 216))) g.FillRectangle(gl, 12, Height - 25, 20, 10);
+                using (var br = new SolidBrush(Color.FromArgb(207, 210, 216))) g.FillRectangle(br, 15, Height - 23, 14, 6);
+                g.DrawString(haveMe ? "Glowing = LLM Icarus" : "Totals for this PC", f, gray, 38, Height - 28);
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) pulse.Dispose();
+            base.Dispose(disposing);
+        }
+    }
+
     // The small About window opened from the menu of the icon in the notification area.
     class AboutForm : Form
     {
@@ -279,6 +465,11 @@ namespace LLMIcarus
         bool updating;          // an update is being installed: the app is about to close itself
         string dataDir;         // where models, chats and downloaded updates live
         readonly NotifyIcon tray = new NotifyIcon();
+        PerfPopup perfPopup;                 // the bars shown while the mouse is over the icon in the notification area
+        Rectangle trayRect = Rectangle.Empty; // where that icon is on the screen
+        DateTime lastOverTray = DateTime.MinValue;
+        readonly System.Windows.Forms.Timer perfHide = new System.Windows.Forms.Timer();   // watches whether the mouse has left
+        readonly System.Windows.Forms.Timer perfFetch = new System.Windows.Forms.Timer();  // asks the server for new readings
         readonly ToolStripMenuItem updateItem = new ToolStripMenuItem();
         AboutForm aboutForm;
         string startError;      // why the server could not be started, shown to the user
@@ -301,7 +492,12 @@ namespace LLMIcarus
 
             // the icon in the notification area while the window is hidden: click to open, right-click for Open / Quit
             tray.Icon = Icon != null ? Icon : SystemIcons.Application;
-            tray.Text = "LLM Icarus (running in the background)";
+            tray.Text = ""; // hovering shows the performance bars instead of the plain name
+            tray.MouseMove += delegate { OnTrayHover(); };
+            perfHide.Interval = 150;
+            perfHide.Tick += delegate { CheckTrayHover(); };
+            perfFetch.Interval = 1000;
+            perfFetch.Tick += delegate { FetchPerf(); };
             var menu = new ContextMenuStrip();
             var about = new ToolStripMenuItem("About");
             about.Click += delegate { ShowAbout(); };
@@ -348,7 +544,7 @@ namespace LLMIcarus
 
             Load += OnLoad;
             FormClosing += OnClosing;
-            FormClosed += delegate { tray.Visible = false; tray.Dispose(); };
+            FormClosed += delegate { HidePerfPopup(); if (perfPopup != null) perfPopup.Dispose(); tray.Visible = false; tray.Dispose(); };
         }
 
         // Another copy of the program was started: show this window again, whether it was hidden or just behind others.
@@ -367,8 +563,89 @@ namespace LLMIcarus
             try { tray.ShowBalloonTip(4000, "LLM Icarus is still running", "Click its icon to open the window, or right-click it to quit.", ToolTipIcon.Info); } catch { }
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        struct NOTIFYICONIDENTIFIER { public uint cbSize; public IntPtr hWnd; public uint uID; public Guid guidItem; }
+        [StructLayout(LayoutKind.Sequential)]
+        struct RECT { public int left, top, right, bottom; }
+        [DllImport("shell32.dll")]
+        static extern int Shell_NotifyIconGetRect(ref NOTIFYICONIDENTIFIER id, out RECT rect);
+
+        // Where the notification-area icon is on the screen (Windows does not say directly; the NotifyIcon keeps its window and id).
+        Rectangle GetTrayRect()
+        {
+            try
+            {
+                var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                var win = typeof(NotifyIcon).GetField("window", flags).GetValue(tray) as NativeWindow;
+                var id = new NOTIFYICONIDENTIFIER();
+                id.hWnd = win.Handle;
+                id.uID = (uint)(int)typeof(NotifyIcon).GetField("id", flags).GetValue(tray);
+                id.cbSize = (uint)Marshal.SizeOf(typeof(NOTIFYICONIDENTIFIER));
+                RECT r;
+                if (Shell_NotifyIconGetRect(ref id, out r) == 0 && r.right > r.left) return Rectangle.FromLTRB(r.left, r.top, r.right, r.bottom);
+            }
+            catch { }
+            return Rectangle.Empty;
+        }
+
+        // The mouse is over the icon: show the bars above it (or below it when the taskbar is at the top of the screen).
+        void OnTrayHover()
+        {
+            lastOverTray = DateTime.UtcNow;
+            if (perfPopup != null && perfPopup.Visible) return;
+            if (perfPopup == null || perfPopup.IsDisposed) perfPopup = new PerfPopup();
+            Point cursor = Cursor.Position;
+            trayRect = GetTrayRect();
+            if (trayRect.IsEmpty) trayRect = new Rectangle(cursor.X - 14, cursor.Y - 14, 28, 28);
+            Rectangle area = Screen.FromRectangle(trayRect).WorkingArea;
+            Size size = perfPopup.Size;
+            int x = Math.Max(area.Left + 4, Math.Min(area.Right - size.Width - 4, trayRect.Left + trayRect.Width / 2 - size.Width / 2));
+            bool above = trayRect.Top > area.Top + area.Height / 2;
+            int y = above ? trayRect.Top - size.Height - 8 : trayRect.Bottom + 8;
+            y = Math.Max(area.Top + 4, Math.Min(area.Bottom - size.Height - 4, y));
+            perfPopup.Location = new Point(x, y);
+            perfPopup.Show();
+            perfHide.Start();
+            perfFetch.Start();
+            FetchPerf();
+        }
+
+        // Every moment: keep the bars while the mouse is over the icon or over the bars; hide them shortly after it leaves.
+        void CheckTrayHover()
+        {
+            if (perfPopup == null || !perfPopup.Visible) { HidePerfPopup(); return; }
+            Point c = Cursor.Position;
+            Rectangle near = Rectangle.Inflate(trayRect, 6, 6);
+            if (near.Contains(c) || perfPopup.Bounds.Contains(c)) lastOverTray = DateTime.UtcNow;
+            else if ((DateTime.UtcNow - lastOverTray).TotalMilliseconds > 400) HidePerfPopup();
+        }
+
+        void HidePerfPopup()
+        {
+            perfHide.Stop();
+            perfFetch.Stop();
+            if (perfPopup != null && !perfPopup.IsDisposed && perfPopup.Visible) perfPopup.Hide();
+        }
+
+        // New readings from the server (it only measures while somebody asks, so this starts and stops it too).
+        void FetchPerf()
+        {
+            Task.Run(() =>
+            {
+                try
+                {
+                    var js = new System.Web.Script.Serialization.JavaScriptSerializer();
+                    var d = js.DeserializeObject(ReadText(url + "/api/sysmon")) as System.Collections.Generic.Dictionary<string, object>;
+                    if (d == null) return;
+                    BeginInvoke((Action)(() => { if (perfPopup != null && !perfPopup.IsDisposed && perfPopup.Visible) perfPopup.SetData(d); }));
+                }
+                catch { }
+            });
+        }
+
         void ShowFromBackground()
         {
+            HidePerfPopup();
             if (!Visible) Show();
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
             tray.Visible = false;
