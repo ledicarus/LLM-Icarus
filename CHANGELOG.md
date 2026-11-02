@@ -5,6 +5,12 @@ under "Unreleased"; `installer\build-all.ps1` moves them under the new version w
 
 ## Unreleased
 
+## 2.2.11-1-26 (November 1, 2026)
+
+- The question shown when you close the window now has a **Remember my choice** box. Tick it with Run in background or Quit and the window will do that every time without asking (Cancel never saves anything). You can change it later in Settings > About under "When the window is closed": Ask me every time, Keep running in the background, or Quit LLM Icarus. Windows app only.
+
+- The menu of the icon in the notification area now reads: **About**, a divider, **Open LLM Icarus**, **Update**, a divider, **Quit**. Update is grayed out unless a newer version has been found (the app now also looks for one in the background every few hours while it runs, so this works even after the window has been hidden for days); clicking it opens the window and starts downloading the update. About opens a small window with the version, what the app is, and links to its GitHub page, license and third-party notices. The same information is in a new **About** tab in Settings.
+
 ## 2.1.11-1-26 (November 1, 2026)
 
 - The version number is shown in small grey text under the app name in the sidebar.

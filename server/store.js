@@ -13,7 +13,7 @@ const newId = () => crypto.randomUUID().slice(0, 8);
 
 export function settings() {
   const saved = readJson(SETTINGS, {});
-  return { ctx: 8192, codeCtx: 32768, codeAllowShell: false, codeThinking: true, kvQuant: 'q8_0', checkAppUpdates: true, ignoredProjects: [], ...saved, projectRoots: saved.projectRoots ?? defaultProjectRoots() };
+  return { ctx: 8192, codeCtx: 32768, codeAllowShell: false, codeThinking: true, kvQuant: 'q8_0', checkAppUpdates: true, closeAction: 'ask', ignoredProjects: [], ...saved, projectRoots: saved.projectRoots ?? defaultProjectRoots() };
 }
 
 export function saveSettings(patch) {

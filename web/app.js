@@ -2148,6 +2148,7 @@ const SETTINGS_TABS = [
   { id: 'models', title: 'Models', show: refreshModelDialog },
   { id: 'engines', title: 'Engines', show: renderEngineTab },
   { id: 'app', title: 'App', show: renderAppTab },
+  { id: 'about', title: 'About', show: renderAboutTab },
 ];
 let settingsTab = 'folders';
 
@@ -2812,6 +2813,36 @@ async function startupUpdateCheck() {
     /* offline or GitHub is busy: try again next start */
   }
 }
+
+async function renderAboutTab() {
+  $('about-version').textContent = state.version?.version ? `Version ${state.version.version}` : '';
+  try {
+    state.settings = await api('/api/settings'); // the close prompt in the app window may have saved a choice since this page loaded
+  } catch {
+    /* keep what we have */
+  }
+  // what closing the window does: only the Windows app window has this choice (elsewhere closing it ends the app or is up to the browser)
+  $('about-close').hidden = !inAppWindow;
+  $('close-action').value = ['ask', 'background', 'quit'].includes(state.settings?.closeAction) ? state.settings.closeAction : 'ask';
+  $('close-action').onchange = async (e) => {
+    state.settings = await api('/api/settings', { method: 'POST', body: { closeAction: e.target.value } });
+  };
+}
+
+// "Update" in the menu of the icon in the notification area: the app window shows itself and asks us to start
+async function startUpdateFromHost() {
+  try {
+    const info = await api('/api/app-update/check', { method: 'POST', body: {} });
+    if (info.error) return upShow({ title: 'Could not check for updates', body: `<p>${esc(info.error)}</p>`, buttons: [{ label: 'Close', run: upClose }] });
+    if (!info.newer) return upShow({ title: 'You have the newest version', body: `<p>LLM Icarus ${esc(info.current)} is up to date.</p>`, buttons: [{ label: 'Close', run: upClose }] });
+    upOffer = info;
+    if (info.canSelfUpdate && info.asset) await startUpdateDownload();
+    else showUpdateOffer(info);
+  } catch (e) {
+    upShow({ title: 'Could not check for updates', body: `<p>${esc(e.message)}</p>`, buttons: [{ label: 'Close', run: upClose }] });
+  }
+}
+if (inAppWindow) window.chrome.webview.addEventListener('message', (e) => { if (e.data === 'start-update') startUpdateFromHost(); });
 
 async function renderAppTab() {
   const v = state.version?.version || '';

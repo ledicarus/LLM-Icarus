@@ -87,6 +87,7 @@ async function route(req, res, url) {
   // --- this app: its version, and updating it from the newest GitHub release ---
   if (pathname === '/api/version' && m === 'GET') return json(res, 200, { version: appupdate.version(), canSelfUpdate: appupdate.canSelfUpdate() });
   if (pathname === '/api/app-update' && m === 'GET') return json(res, 200, appupdate.status());
+  if (pathname === '/api/app-update/available' && m === 'GET') return json(res, 200, appupdate.known());
   if (pathname === '/api/app-update/check' && m === 'POST') {
     const { auto } = await readBody(req);
     if (auto && store.settings().checkAppUpdates === false) return json(res, 200, { disabled: true });

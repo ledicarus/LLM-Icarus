@@ -108,6 +108,82 @@ namespace LLMIcarus
         }
     }
 
+    // The small About window opened from the menu of the icon in the notification area.
+    class AboutForm : Form
+    {
+        const string Repo = "https://github.com/ledicarus/LLM-Icarus";
+
+        public AboutForm(string version, string logoPath, Icon icon)
+        {
+            Color dark = Color.FromArgb(31, 30, 27);
+            Color light = Color.FromArgb(236, 233, 223);
+            Color muted = Color.FromArgb(160, 156, 144);
+            Text = "About LLM Icarus";
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            StartPosition = FormStartPosition.CenterScreen;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            BackColor = dark;
+            ForeColor = light;
+            Font = new Font("Segoe UI", 9.5f);
+            ClientSize = new Size(460, 286);
+            if (icon != null) Icon = icon;
+
+            var pic = new PictureBox();
+            pic.SetBounds(24, 22, 72, 72);
+            pic.SizeMode = PictureBoxSizeMode.Zoom;
+            try { if (File.Exists(logoPath)) pic.Image = Image.FromFile(logoPath); else if (icon != null) pic.Image = icon.ToBitmap(); } catch { }
+            Controls.Add(pic);
+
+            var title = new Label();
+            title.Text = "LLM Icarus";
+            title.Font = new Font("Segoe UI Semibold", 17f);
+            title.SetBounds(112, 26, 330, 34);
+            Controls.Add(title);
+
+            var ver = new Label();
+            ver.Text = version.Length > 0 ? "Version " + version : "";
+            ver.ForeColor = muted;
+            ver.SetBounds(114, 62, 330, 22);
+            Controls.Add(ver);
+
+            var about = new Label();
+            about.Text = "Run AI models on your own computer: chat, code, transcribe speech, and make images, drawings and 3D parts. " +
+                         "Everything stays on this PC.";
+            about.SetBounds(24, 112, 412, 56);
+            Controls.Add(about);
+
+            Controls.Add(MakeLink("github.com/ledicarus/LLM-Icarus", Repo, 24, 176));
+            Controls.Add(MakeLink("Released under the MIT License", Repo + "/blob/main/LICENSE", 24, 204));
+            Controls.Add(MakeLink("Third-party components and licenses", Repo + "/blob/main/THIRD_PARTY_NOTICES.txt", 24, 232));
+
+            var ok = new Button();
+            ok.Text = "OK";
+            ok.DialogResult = DialogResult.OK;
+            ok.FlatStyle = FlatStyle.Flat;
+            ok.FlatAppearance.BorderSize = 0;
+            ok.BackColor = Color.FromArgb(31, 111, 196);
+            ok.ForeColor = light;
+            ok.SetBounds(356, 238, 80, 32);
+            Controls.Add(ok);
+            AcceptButton = ok;
+            CancelButton = ok;
+        }
+
+        static LinkLabel MakeLink(string text, string address, int left, int top)
+        {
+            var l = new LinkLabel();
+            l.Text = text;
+            l.AutoSize = true;
+            l.Location = new Point(left, top);
+            l.LinkColor = Color.FromArgb(120, 170, 235);
+            l.ActiveLinkColor = Color.FromArgb(170, 205, 250);
+            l.LinkBehavior = LinkBehavior.HoverUnderline;
+            l.LinkClicked += delegate { try { Process.Start(address); } catch { } };
+            return l;
+        }
+    }
+
     // "Run in background / Quit / Cancel" shown when the window is closed. Yes = run in background, No = quit.
     class CloseChoiceForm : Form
     {
@@ -125,7 +201,7 @@ namespace LLMIcarus
             BackColor = dark;
             ForeColor = light;
             Font = new Font("Segoe UI", 9.5f);
-            ClientSize = new Size(470, 212);
+            ClientSize = new Size(470, 248);
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
             var head = new Label();
@@ -139,6 +215,12 @@ namespace LLMIcarus
                         "Claude Code and other programs can still send it prompts. Click the icon to open the window again, or right-click it to quit.";
             body.SetBounds(20, 54, 430, 84);
             Controls.Add(body);
+
+            remember.Text = "Remember my choice (you can change it in Settings > About)";
+            remember.AutoSize = true;
+            remember.ForeColor = light;
+            remember.Location = new Point(22, 146);
+            Controls.Add(remember);
 
             Button run = MakeButton("Run in background", DialogResult.Yes, 20, accent, light);
             Button quit = MakeButton("Quit", DialogResult.No, 214, Color.FromArgb(58, 56, 50), light);
@@ -162,14 +244,21 @@ namespace LLMIcarus
             b.FlatAppearance.BorderSize = 0;
             b.BackColor = back;
             b.ForeColor = fore;
-            b.SetBounds(left, 154, 100, 36);
+            b.SetBounds(left, 190, 100, 36);
             return b;
         }
 
-        public static DialogResult Ask(IWin32Window owner)
+        readonly CheckBox remember = new CheckBox();
+
+        // Shows the question. remember is true when the box was ticked (the caller ignores it for Cancel).
+        public static DialogResult Ask(IWin32Window owner, out bool remember)
         {
             using (var f = new CloseChoiceForm())
-                return f.ShowDialog(owner);
+            {
+                DialogResult r = f.ShowDialog(owner);
+                remember = f.remember.Checked;
+                return r;
+            }
         }
     }
 
@@ -190,6 +279,8 @@ namespace LLMIcarus
         bool updating;          // an update is being installed: the app is about to close itself
         string dataDir;         // where models, chats and downloaded updates live
         readonly NotifyIcon tray = new NotifyIcon();
+        readonly ToolStripMenuItem updateItem = new ToolStripMenuItem();
+        AboutForm aboutForm;
         string startError;      // why the server could not be started, shown to the user
         bool pageOk;            // the app page has loaded successfully at least once since the last reload
         bool watching;          // a watchdog check is running
@@ -212,14 +303,23 @@ namespace LLMIcarus
             tray.Icon = Icon != null ? Icon : SystemIcons.Application;
             tray.Text = "LLM Icarus (running in the background)";
             var menu = new ContextMenuStrip();
+            var about = new ToolStripMenuItem("About");
+            about.Click += delegate { ShowAbout(); };
             var open = new ToolStripMenuItem("Open LLM Icarus");
             open.Font = new Font(open.Font, FontStyle.Bold);
             open.Click += delegate { ShowFromBackground(); };
+            updateItem.Text = "Update";
+            updateItem.Enabled = false; // only usable while a newer version is known
+            updateItem.Click += delegate { StartUpdateFromMenu(); };
             var quit = new ToolStripMenuItem("Quit");
             quit.Click += delegate { QuitApp(); };
+            menu.Items.Add(about);
+            menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(open);
+            menu.Items.Add(updateItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(quit);
+            menu.Opening += delegate { RefreshUpdateItem(); };
             tray.ContextMenuStrip = menu;
             tray.MouseClick += delegate (object s, MouseEventArgs a) { if (a.Button == MouseButtons.Left) ShowFromBackground(); };
             BackColor = Dark;
@@ -280,6 +380,53 @@ namespace LLMIcarus
         {
             quitting = true;
             Close();
+        }
+
+        // The version in package.json next to the program.
+        string ReadVersion()
+        {
+            try
+            {
+                string text = File.ReadAllText(Path.Combine(root, "package.json"));
+                System.Text.RegularExpressions.Match m = System.Text.RegularExpressions.Regex.Match(text, "\"version\"\\s*:\\s*\"([^\"]+)\"");
+                if (m.Success) return m.Groups[1].Value;
+            }
+            catch { }
+            return "";
+        }
+
+        // The small About window from the icon's menu (the same facts as Settings > About inside the app).
+        void ShowAbout()
+        {
+            if (aboutForm == null || aboutForm.IsDisposed)
+                aboutForm = new AboutForm(ReadVersion(), Path.Combine(root, "web", "logo.png"), Icon);
+            if (!aboutForm.Visible) aboutForm.Show();
+            if (aboutForm.WindowState == FormWindowState.Minimized) aboutForm.WindowState = FormWindowState.Normal;
+            aboutForm.Activate();
+        }
+
+        // "Update" is only clickable when the server knows a newer version exists (it checks GitHub in the background).
+        void RefreshUpdateItem()
+        {
+            bool newer = false;
+            string latest = "";
+            try
+            {
+                string text = ReadText(url + "/api/app-update/available");
+                newer = text.Contains("\"newer\":true");
+                System.Text.RegularExpressions.Match m = System.Text.RegularExpressions.Regex.Match(text, "\"latest\":\"([^\"]+)\"");
+                if (m.Success) latest = m.Groups[1].Value;
+            }
+            catch { }
+            updateItem.Enabled = newer && !updating;
+            updateItem.ToolTipText = newer ? "Version " + latest + " is available" : "LLM Icarus is up to date";
+        }
+
+        // Update clicked in the icon's menu: show the window and let the page download the new version (it shows the progress).
+        void StartUpdateFromMenu()
+        {
+            ShowFromBackground();
+            try { if (web.CoreWebView2 != null) web.CoreWebView2.PostWebMessageAsString("start-update"); } catch { }
         }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -367,7 +514,18 @@ namespace LLMIcarus
             // (Not asked when Windows is shutting down, when the app never started properly, or after choosing Quit.)
             if (!quitting && e.CloseReason == CloseReason.UserClosing && web.CoreWebView2 != null)
             {
-                DialogResult choice = CloseChoiceForm.Ask(this);
+                // a remembered choice (Settings > About, or the box on the question) skips the question
+                string saved = ReadCloseAction();
+                DialogResult choice;
+                if (saved == "background") choice = DialogResult.Yes;
+                else if (saved == "quit") choice = DialogResult.No;
+                else
+                {
+                    bool remember;
+                    choice = CloseChoiceForm.Ask(this, out remember);
+                    if (remember && (choice == DialogResult.Yes || choice == DialogResult.No))
+                        SaveCloseAction(choice == DialogResult.Yes ? "background" : "quit");
+                }
                 if (choice == DialogResult.Yes) { e.Cancel = true; RunInBackground(); return; }
                 if (choice != DialogResult.No) { e.Cancel = true; return; }
                 quitting = true;
@@ -377,6 +535,35 @@ namespace LLMIcarus
             watchdog.Stop();
             if (!startedServer) return; // it was already running (for example started from a terminal): leave it
             RequestServerShutdown();
+        }
+
+        // What to do when the window is closed: "ask" (default), "background" or "quit". It lives in the app's settings.
+        string ReadCloseAction()
+        {
+            try
+            {
+                System.Text.RegularExpressions.Match m = System.Text.RegularExpressions.Regex.Match(ReadText(url + "/api/settings"), "\"closeAction\"\\s*:\\s*\"(\\w+)\"");
+                if (m.Success) return m.Groups[1].Value;
+            }
+            catch { }
+            return "ask";
+        }
+
+        void SaveCloseAction(string action)
+        {
+            try
+            {
+                byte[] body = System.Text.Encoding.UTF8.GetBytes("{\"closeAction\":\"" + action + "\"}");
+                var req = (HttpWebRequest)WebRequest.Create(url + "/api/settings");
+                req.Method = "POST";
+                req.ContentType = "application/json";
+                req.ContentLength = body.Length;
+                req.Timeout = 3000;
+                req.Proxy = null;
+                using (Stream s = req.GetRequestStream()) s.Write(body, 0, body.Length);
+                req.GetResponse().Close();
+            }
+            catch { }
         }
 
         void RequestServerShutdown()

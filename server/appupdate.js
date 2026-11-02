@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { ROOT, DATA, readJson } from './paths.js';
+import * as store from './store.js';
 import { emit } from './events.js';
 
 // Updating LLM Icarus itself (Windows installed copy): look up the newest GitHub release, download its installer with
@@ -71,6 +72,22 @@ export async function check({ force } = {}) {
   };
   return cached;
 }
+
+// What the last check found, without asking GitHub again (the menu of the icon in the notification area uses this).
+export const known = () => (cached ? { newer: !!cached.newer, latest: cached.latest, canSelfUpdate: !!cached.canSelfUpdate } : { newer: false });
+
+// Look in the background too: shortly after the server starts, then every few hours, so the app can offer an update even
+// when its window has been hidden for days. Skipped when "check when LLM Icarus starts" is switched off.
+async function backgroundCheck() {
+  try {
+    if (store.settings().checkAppUpdates === false) return;
+    await check({ force: true });
+  } catch {
+    /* offline: try again later */
+  }
+}
+setTimeout(backgroundCheck, 8000).unref();
+setInterval(backgroundCheck, 6 * 3600 * 1000).unref();
 
 // ---- downloading ---------------------------------------------------------------
 

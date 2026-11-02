@@ -119,6 +119,31 @@
     <label class="muted"><input type="checkbox" id="app-auto"> Check for a new version when LLM Icarus starts</label>
     <p><small class="muted">The check asks github.com for the newest release of LLM Icarus and sends nothing else. A new version is only downloaded and installed if you say so.</small></p>
   </section>
+
+  <section id="tab-about" class="tab-panel" hidden>
+    <div class="about-head">
+      <img src="/logo.png" alt="">
+      <div><h2>LLM Icarus</h2><div id="about-version" class="muted"></div></div>
+    </div>
+    <p>Run AI models on your own computer: chat, code, transcribe speech, and make images, drawings and 3D parts. Everything stays on this PC.</p>
+    <ul class="about-links">
+      <li><a href="https://github.com/ledicarus/LLM-Icarus" target="_blank" rel="noopener">github.com/ledicarus/LLM-Icarus</a></li>
+      <li><a href="https://github.com/ledicarus/LLM-Icarus/issues" target="_blank" rel="noopener">Report a problem or ask for a feature</a></li>
+      <li><a href="https://github.com/ledicarus/LLM-Icarus/blob/main/LICENSE" target="_blank" rel="noopener">Released under the MIT License</a></li>
+      <li><a href="https://github.com/ledicarus/LLM-Icarus/blob/main/THIRD_PARTY_NOTICES.txt" target="_blank" rel="noopener">Third-party components and licenses</a></li>
+    </ul>
+    <div id="about-close" hidden>
+      <h3>When the window is closed</h3>
+      <div class="row">
+        <select id="close-action">
+          <option value="ask">Ask me every time</option>
+          <option value="background">Keep running in the background</option>
+          <option value="quit">Quit LLM Icarus</option>
+        </select>
+      </div>
+      <small class="muted">In the background the app stays in the notification area next to the clock, so Claude Code and other programs can still send it prompts.</small>
+    </div>
+  </section>
 </dialog>
 
 <dialog id="update-dialog">
