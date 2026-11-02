@@ -1,5 +1,6 @@
 # Windows probe for the performance sidebar: once a second it adds up what LLM Icarus's own processes use and prints one
-# JSON line:  {"pids":N,"names":["node","llama-server"],"cpuSec":123.4,"ramBytes":N,"gpu":P,"vramBytes":N}
+# JSON line:  {"pids":N,"names":["node","llama-server"],"cpuSec":123.4,"ramBytes":N,"gpu":P,"gpuTotal":P,"vramBytes":N}
+# (gpu = LLM Icarus's share of the graphics card, gpuTotal = the whole card, both measured like Task Manager)
 # "LLM Icarus's own processes" = the server (the process given as -RootPid) and everything it started (the model engine,
 # the Python helpers, ...), plus the app window ("LLM Icarus.exe") that started the server and its WebView2 processes.
 param([int]$RootPid)
@@ -64,7 +65,12 @@ $exclude = @('typeperf.exe', 'nvidia-smi.exe', 'powershell.exe', 'conhost.exe')
 $gpuEng = @{}   # instance name -> PerformanceCounter
 $gpuMem = @{}
 $hasGpuCats = $true
-try { $null = [System.Diagnostics.PerformanceCounterCategory]::Exists('GPU Engine') } catch { $hasGpuCats = $false }
+$gpuCat = $null; $gpuMemCat = $null
+try {
+  $gpuCat = New-Object System.Diagnostics.PerformanceCounterCategory('GPU Engine')
+  $gpuMemCat = New-Object System.Diagnostics.PerformanceCounterCategory('GPU Process Memory')
+  $null = $gpuCat.GetInstanceNames()
+} catch { $hasGpuCats = $false }
 
 while ($true) {
   $t0 = [Environment]::TickCount
@@ -93,43 +99,59 @@ while ($true) {
     if ($s) { $cpu += $s[0]; $ram += $s[1]; $names[($name[$id] -replace '\.exe$', '')] = 1 }
   }
 
-  # graphics card: load (the busiest kind of engine counts, as in Task Manager) and dedicated memory, per process
-  $gpu = 0.0; $vram = 0L
-  if ($hasGpuCats -and $ids.Count) {
+  # graphics card, the way Task Manager measures it: per kind of engine (3D, compute, copy, video ...) the loads of all
+  # processes add up, and the busiest kind is the card's load. LLM Icarus's share is worked out the same way from its own
+  # processes; its dedicated graphics memory is added up per process.
+  $gpu = 0.0; $gpuTotal = $null; $vram = 0L
+  if ($hasGpuCats) {
     try {
-      $idset = New-Object System.Collections.Generic.HashSet[string]
-      foreach ($id in $ids) { [void]$idset.Add("pid_$($id)_") }
+      $mine = New-Object System.Collections.Generic.HashSet[string]
+      foreach ($id in $ids) { [void]$mine.Add([string]$id) }
       $seen = @{}
-      $perType = @{}   # "pid|type" -> summed load of that kind of engine
-      foreach ($inst in (New-Object System.Diagnostics.PerformanceCounterCategory('GPU Engine')).GetInstanceNames()) {
-        if ($inst -notmatch '^pid_(\d+)_') { continue }
-        if (-not $idset.Contains("pid_$($Matches[1])_")) { continue }
-        $pidv = $Matches[1]
+      $allType = @{}   # "luid|type" -> load of that kind of engine, all processes together
+      $perType = @{}   # "pid|type"  -> load of that kind of engine, Icarus processes only
+      foreach ($inst in $gpuCat.GetInstanceNames()) {
+        if ($inst -notmatch '^pid_(\d+)_luid_(0x[0-9A-Fa-f]+_0x[0-9A-Fa-f]+)_phys_\d+_eng_\d+_engtype_(\w+)$') { continue }
+        $pidv = $Matches[1]; $luid = $Matches[2]; $type = $Matches[3]
+        try {
+          if (-not $gpuEng.ContainsKey($inst)) { $gpuEng[$inst] = New-Object System.Diagnostics.PerformanceCounter('GPU Engine', 'Utilization Percentage', $inst, $true) }
+          $v = [double]$gpuEng[$inst].NextValue()
+        } catch {
+          # that process ended between listing and reading: forget it (and do not switch the whole card off for one process)
+          if ($gpuEng.ContainsKey($inst)) { $gpuEng[$inst].Dispose(); $gpuEng.Remove($inst) }
+          continue
+        }
         $seen[$inst] = 1
-        if (-not $gpuEng.ContainsKey($inst)) { $gpuEng[$inst] = New-Object System.Diagnostics.PerformanceCounter('GPU Engine', 'Utilization Percentage', $inst, $true) }
-        $type = if ($inst -match 'engtype_(\w+)$') { $Matches[1] } else { 'x' }
-        $k = "$pidv|$type"
-        $perType[$k] = [double]$perType[$k] + $gpuEng[$inst].NextValue()
+        $k = "$luid|$type"; $allType[$k] = [double]$allType[$k] + $v
+        if ($mine.Contains($pidv)) { $k = "$pidv|$type"; $perType[$k] = [double]$perType[$k] + $v }
       }
       foreach ($k in @($gpuEng.Keys)) { if (-not $seen.ContainsKey($k)) { $gpuEng[$k].Dispose(); $gpuEng.Remove($k) } }
+      if ($allType.Count) { $gpuTotal = [Math]::Min(100.0, ($allType.Values | Measure-Object -Maximum).Maximum) }
       $perPid = @{}
       foreach ($k in $perType.Keys) { $pidv = $k.Split('|')[0]; if ($perType[$k] -gt [double]$perPid[$pidv]) { $perPid[$pidv] = $perType[$k] } }
       foreach ($v in $perPid.Values) { $gpu += $v }
+      if ($gpuTotal -ne $null -and $gpu -gt $gpuTotal) { $gpu = $gpuTotal }
 
-      $seenM = @{}
-      foreach ($inst in (New-Object System.Diagnostics.PerformanceCounterCategory('GPU Process Memory')).GetInstanceNames()) {
-        if ($inst -notmatch '^pid_(\d+)_') { continue }
-        if (-not $idset.Contains("pid_$($Matches[1])_")) { continue }
-        $seenM[$inst] = 1
-        if (-not $gpuMem.ContainsKey($inst)) { $gpuMem[$inst] = New-Object System.Diagnostics.PerformanceCounter('GPU Process Memory', 'Dedicated Usage', $inst, $true) }
-        $vram += [long]$gpuMem[$inst].NextValue()
+      if ($ids.Count) {
+        $seenM = @{}
+        foreach ($inst in $gpuMemCat.GetInstanceNames()) {
+          if ($inst -notmatch '^pid_(\d+)_') { continue }
+          if (-not $mine.Contains($Matches[1])) { continue }
+          try {
+            if (-not $gpuMem.ContainsKey($inst)) { $gpuMem[$inst] = New-Object System.Diagnostics.PerformanceCounter('GPU Process Memory', 'Dedicated Usage', $inst, $true) }
+            $vram += [long]$gpuMem[$inst].NextValue()
+            $seenM[$inst] = 1
+          } catch { if ($gpuMem.ContainsKey($inst)) { $gpuMem[$inst].Dispose(); $gpuMem.Remove($inst) } }
+        }
+        foreach ($k in @($gpuMem.Keys)) { if (-not $seenM.ContainsKey($k)) { $gpuMem[$k].Dispose(); $gpuMem.Remove($k) } }
       }
-      foreach ($k in @($gpuMem.Keys)) { if (-not $seenM.ContainsKey($k)) { $gpuMem[$k].Dispose(); $gpuMem.Remove($k) } }
     } catch { $hasGpuCats = $false }
   }
 
   $list = ($names.Keys | Sort-Object | ForEach-Object { '"' + $_ + '"' }) -join ','
-  [Console]::Out.WriteLine(('{{"pids":{0},"names":[{1}],"cpuSec":{2},"ramBytes":{3},"gpu":{4},"vramBytes":{5}}}' -f $ids.Count, $list, ($cpu / 1e7).ToString('0.###', [Globalization.CultureInfo]::InvariantCulture), $ram, $gpu.ToString('0.#', [Globalization.CultureInfo]::InvariantCulture), $vram))
+  $inv = [Globalization.CultureInfo]::InvariantCulture
+  $total = if ($gpuTotal -eq $null) { 'null' } else { ([double]$gpuTotal).ToString('0.#', $inv) }
+  [Console]::Out.WriteLine(('{{"pids":{0},"names":[{1}],"cpuSec":{2},"ramBytes":{3},"gpu":{4},"gpuTotal":{5},"vramBytes":{6}}}' -f $ids.Count, $list, ($cpu / 1e7).ToString('0.###', $inv), $ram, $gpu.ToString('0.#', $inv), $total, $vram))
   [Console]::Out.Flush()
   $left = 1000 - ([Environment]::TickCount - $t0)
   if ($left -gt 20) { Start-Sleep -Milliseconds $left }

@@ -5,6 +5,10 @@ under "Unreleased"; `installer\build-all.ps1` moves them under the new version w
 
 ## Unreleased
 
+## 2.6.11-1-26 (November 1, 2026)
+
+- The performance bars now agree with Windows Task Manager. The GPU bar reads the card's load the way Task Manager does (the busiest kind of engine, mostly "3D") instead of NVIDIA's "anything running at all" figure, which read about twice as high; the glowing part for LLM Icarus uses the same measure, so the two always fit together. The CPU bar averages the last three seconds, so it no longer jumps around (the same for Icarus's share). A graphics counter that fails because a program closed at that moment no longer switches the GPU bar off.
+
 ## 2.5.11-1-26 (November 1, 2026)
 
 - Hover over the icon in the notification area (when LLM Icarus is running in the background) and a small panel pops up above it with the same performance bars as the sidebar: CPU, clock, temperature, RAM, GPU and VRAM, updating every second, with the part used by LLM Icarus itself glowing on top and a ▲ percentage under each bar. It stays while the mouse is on the icon or on the panel and disappears shortly after the mouse leaves. It replaces the plain "LLM Icarus" tooltip. Windows only.

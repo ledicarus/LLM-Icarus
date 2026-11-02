@@ -96,7 +96,7 @@ The 3D tools (OpenSCAD and the carving tools, about 80 MB) install from the 3D s
 
 ## PC readings
 
-`GET /api/sysmon` returns live readings of this PC: `{ cpu, clockGHz, baseGHz, tempC, ramUsedGB, ramTotalGB, cores, gpu: { name, util, tempC, memUsedMB, memTotalMB, clockMHz, powerW } }` (any reading that is not available is `null`). On Windows it also has `me`: what LLM Icarus itself uses (`{ cpu, ramGB, gpu, vramMB, pids, names }`: its server, model engine, helpers and app window), which is part of the totals above; it is `null` elsewhere. Measuring starts on the first request and stops about 20 seconds after the last one. The first reading after a pause can lack the clock and temperature for a couple of seconds.
+`GET /api/sysmon` returns live readings of this PC: `{ cpu, clockGHz, baseGHz, tempC, ramUsedGB, ramTotalGB, cores, gpu: { name, util, tempC, memUsedMB, memTotalMB, clockMHz, powerW } }` (any reading that is not available is `null`). On Windows it also has `me`: what LLM Icarus itself uses (`{ cpu, ramGB, gpu, vramMB, pids, names }`: its server, model engine, helpers and app window), which is part of the totals above; it is `null` elsewhere. On Windows `gpu.util` is measured like Task Manager (the busiest kind of engine, from the Windows graphics counters), and `cpu` is the average of the last three seconds. Measuring starts on the first request and stops about 20 seconds after the last one. The first reading after a pause can lack the clock and temperature for a couple of seconds.
 
 ## Using it from Claude Code
 

@@ -2630,7 +2630,7 @@ async function pollPerf() {
     const ramPct = s.ramTotalGB ? (s.ramUsedGB / s.ramTotalGB) * 100 : null;
     const ramMe = me && s.ramTotalGB ? (me.ramGB / s.ramTotalGB) * 100 : 0;
     setBar('ram', ramPct, ramPct === null ? '' : Math.round(ramPct) + '%', ramPct === null ? '' : `Memory ${s.ramUsedGB.toFixed(1)} of ${s.ramTotalGB.toFixed(1)} GB in use` + split(0, me?.ramGB, ' GB') , ramMe);
-    setBar('gpu', g?.util ?? null, g?.util == null ? '' : g.util + '%', g ? `${g.name}: ${g.util}% busy, ${g.clockMHz} MHz, ${g.powerW} W` + split(0, me?.gpu, '%', 0) : 'Graphics card: no NVIDIA card found', me?.gpu);
+    setBar('gpu', g?.util ?? null, g?.util == null ? '' : g.util + '%', g ? `${g.name}: ${g.util}% busy` + (g.clockMHz != null ? `, ${g.clockMHz} MHz` : '') + (g.powerW != null ? `, ${g.powerW} W` : '') + split(0, me?.gpu, '%', 0) : 'Graphics card: no NVIDIA card found', me?.gpu);
     const vPct = g?.memTotalMB ? (g.memUsedMB / g.memTotalMB) * 100 : null;
     const vMe = me && g?.memTotalMB ? (me.vramMB / g.memTotalMB) * 100 : 0;
     setBar('vram', vPct, vPct === null ? '' : Math.round(vPct) + '%', vPct === null ? 'Graphics memory: no NVIDIA card found' : `Graphics memory ${(g.memUsedMB / 1024).toFixed(1)} of ${(g.memTotalMB / 1024).toFixed(1)} GB in use` + (me ? (me.vramMB > 1 ? `, of which LLM Icarus ${(me.vramMB / 1024).toFixed(1)} GB${who}` : ', LLM Icarus: nothing right now') : ''), vMe);

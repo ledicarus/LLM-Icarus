@@ -18,6 +18,16 @@ const children = new Set();
 const state = { cpu: null, clockGHz: null, tempC: null, ramUsedGB: null, ramTotalGB: null, gpu: null, me: null }; // me = what LLM Icarus itself uses
 let counters = { util: null, perf: null, zones: [] }; // which typeperf columns are which
 
+// Processor load jumps around from second to second, so the bars show the average of the last few readings.
+const SMOOTH = 3;
+const history = {};
+function smooth(key, value) {
+  const h = (history[key] ||= []);
+  h.push(value);
+  if (h.length > SMOOTH) h.shift();
+  return h.reduce((a, b) => a + b, 0) / h.length;
+}
+
 // ---- Node's own numbers (always available) ----------------------------------
 
 let prevTimes = null;
@@ -29,7 +39,7 @@ function sampleNode() {
     for (const k of Object.keys(c.times)) total += c.times[k];
     idle += c.times.idle;
   }
-  if (prevTimes && total > prevTimes.total) state.cpu = Math.max(0, Math.min(100, (1 - (idle - prevTimes.idle) / (total - prevTimes.total)) * 100));
+  if (prevTimes && total > prevTimes.total && !counters.util) state.cpu = smooth('cpu', Math.max(0, Math.min(100, (1 - (idle - prevTimes.idle) / (total - prevTimes.total)) * 100)));
   prevTimes = { idle, total };
   state.ramTotalGB = os.totalmem() / 1073741824;
   state.ramUsedGB = (os.totalmem() - os.freemem()) / 1073741824;
@@ -71,7 +81,7 @@ function startTypeperf(withThermal) {
       const num = (i) => (i === null || i === undefined ? NaN : parseFloat(f[i]));
       const util = num(counters.util);
       const perf = num(counters.perf);
-      if (Number.isFinite(util)) state.cpu = Math.max(0, Math.min(100, util));
+      if (Number.isFinite(util)) state.cpu = smooth('cpu', Math.max(0, Math.min(100, util)));
       if (Number.isFinite(perf) && state.baseGHz) state.clockGHz = (perf / 100) * state.baseGHz;
       const temps = counters.zones.map(num).filter((k) => Number.isFinite(k) && k > 200 && k < 450).map((k) => k - 273.15); // kelvin
       if (temps.length) state.tempC = Math.max(...temps);
@@ -136,8 +146,9 @@ function startProbe() {
       if (prevMe && m.cpuSec >= prevMe.cpuSec && now > prevMe.t) cpu = Math.min(100, ((m.cpuSec - prevMe.cpuSec) / ((now - prevMe.t) / 1000) / os.cpus().length) * 100);
       else if (prevMe) cpu = 0; // a process ended: its time left the total
       prevMe = { cpuSec: m.cpuSec, t: now };
+      state.gpuTotal = typeof m.gpuTotal === 'number' ? m.gpuTotal : null; // the whole card, measured like Task Manager
       state.me = {
-        cpu,
+        cpu: smooth('mecpu', cpu),
         ramGB: m.ramBytes / 1073741824,
         gpu: m.gpu,
         vramMB: m.vramBytes / 1048576,
@@ -174,13 +185,20 @@ function stop() {
   timer = null;
   for (const c of children) c.kill();
   children.clear();
-  Object.assign(state, { cpu: null, clockGHz: null, tempC: null, gpu: null, me: null });
+  Object.assign(state, { cpu: null, clockGHz: null, tempC: null, gpu: null, gpuTotal: null, me: null });
+  for (const k of Object.keys(history)) delete history[k];
 }
 
 export function read() {
   lastAsk = Date.now();
   start();
-  return { ...state, cores: os.cpus().length, platform: process.platform };
+  // the card's load: the Windows engine counters (what Task Manager shows) win over nvidia-smi, which counts any activity at all
+  let gpu = state.gpu;
+  if (state.gpuTotal !== null && state.gpuTotal !== undefined) {
+    gpu = { name: 'Graphics card', tempC: null, memUsedMB: null, memTotalMB: null, clockMHz: null, powerW: null, ...(gpu || {}), util: Math.round(state.gpuTotal) };
+  }
+  const { gpuTotal, ...rest } = state;
+  return { ...rest, gpu, cores: os.cpus().length, platform: process.platform };
 }
 
 process.on('exit', () => {
