@@ -10,6 +10,7 @@ Everything except the models themselves is included or downloaded for you.
 - **Vector**: SVG and EPS drawings for Illustrator, Inkscape, cutters and print shops. Describe a drawing and SDXL paints it and traces it (best quality), or the chat model writes the shapes (very simple icons only), or trace a picture you provide exactly.
 - **3D**: STL files for 3D printing and CAD. Describe a part with its sizes and the chat model designs it in OpenSCAD (you can edit the script), or carve a solid from front, side and top outlines at the real dimensions you give. Long rounded things (a banana, a carrot, a bone) can simply be named: the image model draws a picture and a solid is built from its outline. A built-in viewer lets you turn the result around.
 - Transcribe, Image, Vector and 3D work like Chat: drop files into the window, type what you want, press Send. "Advanced options" opens the full settings for each.
+- A collapsible bar on the right shows what your PC is doing as you work: CPU, clock speed, temperature, memory, graphics card and graphics memory. On Windows the part used by LLM Icarus itself glows on top of what everything else uses.
 - Add models by link (Hugging Face or GitHub), file path, or import them from Ollama.
 - An HTTP API so other programs, including Claude Code, can hand it prompts: see [API.md](API.md). On Windows, closing the window offers to keep the app running in the background (an icon next to the clock), so it can still receive prompts.
 

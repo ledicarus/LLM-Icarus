@@ -16,6 +16,7 @@ import * as openscad from './openscad.js';
 import * as platform from './platform.js';
 import * as pyenv from './pyenv.js';
 import * as appupdate from './appupdate.js';
+import * as sysmon from './sysmon.js';
 import { pipeline } from 'node:stream/promises';
 
 let apiTasks = 0; // prompts from /api/tasks currently running (drives the animated logo)
@@ -83,6 +84,9 @@ async function route(req, res, url) {
     engine.stop().finally(() => setTimeout(() => process.exit(0), 200));
     return;
   }
+
+  // --- live readings of this PC for the performance sidebar (sampling runs only while this is being asked) ---
+  if (pathname === '/api/sysmon' && m === 'GET') return json(res, 200, sysmon.read());
 
   // --- this app: its version, and updating it from the newest GitHub release ---
   if (pathname === '/api/version' && m === 'GET') return json(res, 200, { version: appupdate.version(), canSelfUpdate: appupdate.canSelfUpdate() });

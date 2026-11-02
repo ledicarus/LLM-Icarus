@@ -94,6 +94,10 @@ The 3D tools (OpenSCAD and the carving tools, about 80 MB) install from the 3D s
 
 `GET /api/version` returns `{ "version", "canSelfUpdate" }`. `POST /api/app-update/check` (add `{ "auto": true }` to respect the "check at startup" setting) asks GitHub for the newest release and returns `{ current, latest, newer, notes, page, asset, canSelfUpdate }`. `POST /api/app-update/download` starts downloading the installer (installed Windows copies only; progress arrives as `app-update` events on `/api/events` and in `GET /api/app-update`), and `POST /api/app-update/cancel` stops it. Installing is done by the app window, not the API: it runs the downloaded installer when the user presses OK.
 
+## PC readings
+
+`GET /api/sysmon` returns live readings of this PC: `{ cpu, clockGHz, baseGHz, tempC, ramUsedGB, ramTotalGB, cores, gpu: { name, util, tempC, memUsedMB, memTotalMB, clockMHz, powerW } }` (any reading that is not available is `null`). On Windows it also has `me`: what LLM Icarus itself uses (`{ cpu, ramGB, gpu, vramMB, pids, names }`: its server, model engine, helpers and app window), which is part of the totals above; it is `null` elsewhere. Measuring starts on the first request and stops about 20 seconds after the last one. The first reading after a pause can lack the clock and temperature for a couple of seconds.
+
 ## Using it from Claude Code
 
 Windows: tick **Let Claude Code send prompts to LLM Icarus** during setup, or copy the

@@ -91,6 +91,36 @@ button.icon { padding: 4px 10px; font-size: 18px; line-height: 1; }
   #model-select { max-width: 150px; }
 }
 main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+/* Performance sidebar on the right: LED-style bars (always dark, whatever the theme) */
+#perf { width: 286px; flex: none; display: flex; flex-direction: column; padding: 10px 14px 12px; gap: 8px; background: #17171b; border-left: 1px solid #000; color: #cfd2d8; }
+#app.perf-collapsed #perf { display: none; }
+.perf-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #8a8f99; }
+.perf-head button { color: #8a8f99; padding: 2px 8px; }
+#perf-bars { flex: 1; min-height: 0; display: flex; gap: 8px; justify-content: space-between; }
+.pcol { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 7px; }
+.pcol .plabel { font-size: 12px; font-weight: 600; color: var(--c); text-shadow: 0 0 6px var(--c); }
+.pcol .pval { font-size: 12px; color: #e6e8ec; font-variant-numeric: tabular-nums; min-height: 16px; }
+.pbar { position: relative; flex: 1; width: 100%; min-height: 80px; }
+.pbar .track, .pbar .fill {
+  position: absolute; inset: 0; background: var(--g);
+  -webkit-mask-image: repeating-linear-gradient(to top, #000 0 5px, transparent 5px 8px);
+  mask-image: repeating-linear-gradient(to top, #000 0 5px, transparent 5px 8px);
+}
+.pbar .track { opacity: .13; }
+/* each lit part sits in a wrapper that carries the glow (a glow on the clipped element itself would be cut off) */
+.pbar .lit { position: absolute; inset: 0; pointer-events: none; }
+.pbar .lit.base { filter: drop-shadow(0 0 3px var(--c)); }
+.pcol.split .lit.base { opacity: .8; }                              /* what everything else on the PC uses: the bottom part */
+.pbar .lit.base .fill { clip-path: inset(calc(100% - var(--o, 0%)) 0 0 0); transition: clip-path .5s ease; }
+/* what LLM Icarus uses: stacked on top of the rest, brighter, glowing and gently pulsing */
+.pbar .lit.me { filter: brightness(1.55) saturate(1.15) drop-shadow(0 0 4px var(--c)) drop-shadow(0 0 11px var(--c)); animation: glow 2.2s ease-in-out infinite; }
+.pbar .lit.me .fill { clip-path: inset(calc(100% - var(--t, 0%)) 0 var(--o, 0%) 0); transition: clip-path .5s ease; }
+@keyframes glow { 50% { filter: brightness(1.9) saturate(1.2) drop-shadow(0 0 6px var(--c)) drop-shadow(0 0 16px var(--c)); } }
+.pcol .pme { font-size: 10px; min-height: 13px; color: var(--c); text-shadow: 0 0 6px var(--c); font-variant-numeric: tabular-nums; }
+.perf-legend { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #8a8f99; }
+.perf-legend i { width: 14px; height: 7px; border-radius: 2px; background: #cfd2d8; box-shadow: 0 0 6px 1px #cfd2d8; }
+@media (max-width: 760px) { #perf, #toggle-perf { display: none; } }
 header { display: flex; flex-wrap: wrap; row-gap: 6px; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
 header .spacer { flex: 1; }
 #modes { display: flex; gap: 4px; }

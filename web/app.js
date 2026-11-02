@@ -2567,6 +2567,105 @@ const closeIfNarrow = () => {
   applySidebar();
 };
 
+// ---- performance sidebar (right): live PC readings as LED bars -----------------
+
+const PERF_BARS = [ // split: the bar can show a glowing part for what LLM Icarus itself uses (clock speed and temperature belong to the whole PC)
+  { id: 'cpu', label: 'CPU', split: true, c: '#2fe05a', g: 'linear-gradient(to top, #22e04a 0%, #7fdc2b 38%, #e6d52a 62%, #ff8a1f 82%, #ff3b30 100%)' },
+  { id: 'clock', label: 'Clock', c: '#ff3b30', g: 'linear-gradient(to top, #ff3b30, #ff3b30)' },
+  { id: 'temp', label: 'Temp', c: '#ffa51f', g: 'linear-gradient(to top, #ffb21f 0%, #ffa51f 60%, #ff5a1f 100%)' },
+  { id: 'ram', label: 'RAM', split: true, c: '#25d3c4', g: 'linear-gradient(to top, #25d3c4, #25d3c4)' },
+  { id: 'gpu', label: 'GPU', split: true, c: '#3a8dff', g: 'linear-gradient(to top, #3a8dff, #3a8dff)' },
+  { id: 'vram', label: 'VRAM', split: true, c: '#a070ff', g: 'linear-gradient(to top, #a070ff, #a070ff)' },
+];
+let perfTimer = null;
+let perfChoice = null; // 'open' | 'closed' once picked; otherwise open on a wide window
+try {
+  perfChoice = localStorage.getItem('perf');
+} catch {
+  /* storage can be unavailable */
+}
+const perfOpen = () => (perfChoice ? perfChoice === 'open' : window.innerWidth > 1100);
+
+function buildPerfBars() {
+  const box = $('perf-bars');
+  if (box.children.length) return;
+  for (const b of PERF_BARS) {
+    const col = document.createElement('div');
+    col.className = 'pcol';
+    col.id = 'pc-' + b.id;
+    col.style.setProperty('--c', b.c);
+    col.style.setProperty('--g', b.g);
+    if (b.split) col.classList.add('split');
+    col.innerHTML = `<div class="plabel">${b.label}</div><div class="pbar"><div class="track"></div><div class="lit base"><div class="fill"></div></div><div class="lit me"><div class="fill"></div></div></div><div class="pval">–</div><div class="pme"></div>`;
+    box.append(col);
+  }
+}
+
+// pct = the whole bar; mePct = the part of it LLM Icarus itself uses (shown on top, glowing); the rest is everything else
+function setBar(id, pct, text, tip, mePct = 0) {
+  const col = $('pc-' + id);
+  if (!col) return;
+  const clamp = (v) => Math.max(0, Math.min(100, v));
+  const total = pct === null ? 0 : clamp(pct);
+  const mine = pct === null ? 0 : Math.min(total, clamp(mePct || 0));
+  col.style.setProperty('--t', total.toFixed(1) + '%');
+  col.style.setProperty('--o', (total - mine).toFixed(1) + '%');
+  col.querySelector('.lit.me').style.visibility = mine > 0.4 ? 'visible' : 'hidden';
+  col.querySelector('.pval').textContent = pct === null ? '–' : text;
+  col.querySelector('.pme').textContent = mine > 0.4 ? '▲' + Math.round(mine) + '%' : '';
+  col.title = tip;
+}
+
+async function pollPerf() {
+  try {
+    const s = await api('/api/sysmon');
+    const g = s.gpu;
+    const me = s.me; // what LLM Icarus itself uses (null where it cannot be told apart)
+    const who = me?.names?.length ? ` (LLM Icarus: ${me.names.join(', ')})` : '';
+    const split = (total, mine, unit, digits = 1) => (me && mine > 0.0005 ? `, of which LLM Icarus ${mine.toFixed(digits)}${unit}${who}` : me ? ', LLM Icarus: nothing right now' : '');
+    setBar('cpu', s.cpu, s.cpu === null ? '' : s.cpu.toFixed(1) + '%', s.cpu === null ? 'Processor load: not available' : `Processor load ${s.cpu.toFixed(1)}% across ${s.cores} threads` + split(s.cpu, me?.cpu, '%'), me?.cpu);
+    const top = (s.baseGHz || 0) * 1.5; // the bar is full at 1.5 times the base speed (about the turbo speed)
+    setBar('clock', s.clockGHz === null || !top ? null : (s.clockGHz / top) * 100, s.clockGHz === null ? '' : s.clockGHz.toFixed(1) + 'G', s.clockGHz === null ? 'Clock speed: not available' : `Processor speed ${s.clockGHz.toFixed(2)} GHz (base ${s.baseGHz.toFixed(2)} GHz)`);
+    setBar('temp', s.tempC, s.tempC === null ? '' : Math.round(s.tempC) + '°', s.tempC === null ? 'Temperature: not available on this PC' : `Thermal zone ${s.tempC.toFixed(0)} °C` + (g?.tempC != null ? `; graphics card ${g.tempC} °C` : ''));
+    const ramPct = s.ramTotalGB ? (s.ramUsedGB / s.ramTotalGB) * 100 : null;
+    const ramMe = me && s.ramTotalGB ? (me.ramGB / s.ramTotalGB) * 100 : 0;
+    setBar('ram', ramPct, ramPct === null ? '' : Math.round(ramPct) + '%', ramPct === null ? '' : `Memory ${s.ramUsedGB.toFixed(1)} of ${s.ramTotalGB.toFixed(1)} GB in use` + split(0, me?.ramGB, ' GB') , ramMe);
+    setBar('gpu', g?.util ?? null, g?.util == null ? '' : g.util + '%', g ? `${g.name}: ${g.util}% busy, ${g.clockMHz} MHz, ${g.powerW} W` + split(0, me?.gpu, '%', 0) : 'Graphics card: no NVIDIA card found', me?.gpu);
+    const vPct = g?.memTotalMB ? (g.memUsedMB / g.memTotalMB) * 100 : null;
+    const vMe = me && g?.memTotalMB ? (me.vramMB / g.memTotalMB) * 100 : 0;
+    setBar('vram', vPct, vPct === null ? '' : Math.round(vPct) + '%', vPct === null ? 'Graphics memory: no NVIDIA card found' : `Graphics memory ${(g.memUsedMB / 1024).toFixed(1)} of ${(g.memTotalMB / 1024).toFixed(1)} GB in use` + (me ? (me.vramMB > 1 ? `, of which LLM Icarus ${(me.vramMB / 1024).toFixed(1)} GB${who}` : ', LLM Icarus: nothing right now') : ''), vMe);
+    $('perf-legend').hidden = !me;
+  } catch {
+    /* the server is busy or restarting: the next poll will fill the bars in */
+  }
+}
+
+function applyPerf() {
+  const open = perfOpen();
+  $('app').classList.toggle('perf-collapsed', !open);
+  clearInterval(perfTimer);
+  perfTimer = null;
+  if (open) {
+    buildPerfBars();
+    pollPerf();
+    perfTimer = setInterval(() => {
+      if (!document.hidden) pollPerf(); // nothing to do while the window is hidden
+    }, 1000);
+  }
+}
+function setPerf(open) {
+  perfChoice = open ? 'open' : 'closed';
+  try {
+    localStorage.setItem('perf', perfChoice);
+  } catch {
+    /* ignore */
+  }
+  applyPerf();
+}
+$('toggle-perf').onclick = () => setPerf($('app').classList.contains('perf-collapsed'));
+$('close-perf').onclick = () => setPerf(false);
+applyPerf();
+
 // ---- resizable sidebar ---------------------------------------------------
 
 const SB_MIN = 200;

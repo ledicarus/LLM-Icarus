@@ -5,6 +5,10 @@ under "Unreleased"; `installer\build-all.ps1` moves them under the new version w
 
 ## Unreleased
 
+## 2.4.11-1-26 (November 1, 2026)
+
+- New **performance bars** on the right side of the window: LED-style bars for CPU load, clock speed, temperature, memory (RAM), graphics card load (GPU) and graphics memory (VRAM), updated every second, so you can watch what a model is using while it runs. Open and close them with the 📊 button at the top right or the » button on the panel (the choice is remembered; they start open on a wide window). Hover a bar for details. They need nothing installed and no administrator rights; on a PC without an NVIDIA card the GPU and VRAM bars stay empty, and on a Mac only CPU and memory are shown. Nothing is measured while the bars are closed. On Windows, the CPU, RAM, GPU and VRAM bars also show **how much of each is used by LLM Icarus itself** (the app, its model engine, and the helpers for images, transcripts and drawings): the bottom of the bar is everything else on the PC, and on top of it the part used by Icarus glows and pulses, with a small ▲ percentage under the bar. A loaded model shows up as a glowing block in the VRAM bar even while it is idle. Clock speed and temperature belong to the whole PC, so they have no glowing part.
+
 ## 2.3.11-1-26 (November 1, 2026)
 
 - Fixed: the OK button in the About window now closes it (it did nothing before).

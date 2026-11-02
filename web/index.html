@@ -36,6 +36,7 @@
       <div class="spacer"></div>
       <span id="engine-pill" class="pill">Engine: checking…</span>
       <select id="model-select" title="Model"></select>
+      <button id="toggle-perf" class="ghost icon" title="Show or hide the PC performance bars" aria-label="Show or hide the PC performance bars">📊</button>
     </header>
 
     <div id="code-bar" hidden>
@@ -60,6 +61,12 @@
       <div id="status-line"></div>
     </footer>
   </main>
+
+  <aside id="perf" aria-label="PC performance">
+    <div class="perf-head"><span>Performance</span><button id="close-perf" class="ghost icon" title="Hide the performance bars" aria-label="Hide the performance bars">»</button></div>
+    <div id="perf-bars"></div>
+    <div class="perf-legend" id="perf-legend" title="The glowing part of a bar is what LLM Icarus itself is using (the app, its model engine and its helpers). The rest of the bar is everything else on the PC."><i></i>Glowing = LLM Icarus</div>
+  </aside>
 </div>
 
 <!--
